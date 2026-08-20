@@ -1,0 +1,255 @@
+# infra/k8s/20-worker.yaml
+#
+# Deployment + Service + KEDA ScaledObject for packages/worker.
+#
+# *** CLUSTER DEPENDENCY: this file's ScaledObject requires the KEDA
+# operator (CRDs + controller) to be installed in the cluster - a bare
+# Kubernetes install with only the standard `metrics-server` add-on (which
+# is all 10-api.yaml / 30-web.yaml need for their CPU-only HPAs) CANNOT
+# scale on a custom/external metric like queue_length. metrics-server only
+# ever exposes CPU/memory ("resource" metrics); anything else - a
+# Prometheus query, a queue depth, a custom app metric - requires either
+# KEDA (https://keda.sh) or the Prometheus Adapter
+# (https://github.com/kubernetes-sigs/prometheus-adapter) to bridge it into
+# something the autoscaling API understands. This file uses KEDA, because a
+# single KEDA ScaledObject can express both the CPU trigger AND the
+# Prometheus-query trigger together and KEDA manages one underlying HPA for
+# both (avoids hand-rolling two HPA objects fighting over the same
+# Deployment, which is what you'd risk doing by hand with a raw
+# `autoscaling/v2` HPA's `metrics: [{type: External, ...}]` block instead).
+# If your cluster standardizes on the Prometheus Adapter instead of KEDA,
+# the equivalent is a raw HPA with a `type: External` (or `Pods`) metric
+# entry pointing at a custom metric API the Adapter registers from the same
+# `query:` below - ask in #platform before installing a second operator to
+# do the same job KEDA already does here.
+#
+# *** METRIC DEPENDENCY - PLEASE READ: the `queue_length` Prometheus query
+# below does NOT correspond to a metric that packages/worker/src/metrics.js
+# (or anywhere else in this codebase) actually exports as of this writing -
+# confirmed by reading that file directly, which only exports
+# conversion_jobs_started_total, conversion_jobs_failed_total,
+# conversion_jobs_processed_total, conversion_jobs_duration_seconds,
+# active_jobs, engine_usage_total and rendering_memory_bytes. Until a Gauge
+# metric (e.g. named `queue_length`) is added there - populated by
+# periodically polling BullMQ's `Queue#getJobCounts()` /
+# `getWaitingCount()` against the `epub-conversion` queue (QUEUE_NAME in
+# packages/shared/src/constants.js) and set via `client.Gauge`, the same
+# pattern already used for `activeJobsGauge`/`renderingMemoryBytesGauge` in
+# packages/worker/src/processConversionJob.js - and exposed through the
+# already-wired `/metrics` endpoint (packages/worker/src/healthServer.js),
+# this trigger's query returns no series. KEDA treats that as "not active"
+# rather than erroring loudly, so it will silently fall back to CPU-only
+# scaling instead of failing the deploy - meaning a real queue backlog
+# could go unnoticed until CPU also climbs. This is written the way the
+# infra spec asked for (real metric names elsewhere, this one included by
+# explicit instruction) but is flagged here as the single most important
+# follow-up for whoever owns packages/worker next. See the matching caveat
+# in infra/prometheus/alerts.yaml and infra/grafana/dashboard.json.
+#
+# NAMING MISMATCH WITH docs/: docs/RISKS.md item (b) and
+# docs/adr/0002-queue-technology.md both cite the *source spec's* name for
+# this metric as `redis_queue_length`, not `queue_length` - this file uses
+# `queue_length` because that's the exact name given in this infra task's
+# instructions. Same underlying (not-yet-implemented) metric, two different
+# names floating around the repo now - reconcile to one canonical name
+# (in packages/worker/src/metrics.js, and here, and in
+# infra/prometheus/alerts.yaml / infra/grafana/dashboard.json) when it's
+# actually implemented, rather than shipping both.
+#
+# A same-day alternative that needs NO app code change: KEDA also ships a
+# `redis` scaler that can watch a Redis list length directly, e.g. the
+# BullMQ "wait" list `bull:epub-conversion:wait`. That's a real option to
+# unblock this sooner, but it hardcodes a BullMQ-internal Redis key layout
+# (an implementation detail that can change across BullMQ major versions)
+# and only counts strictly-waiting jobs (not delayed/prioritized ones), so
+# it's an approximation, not swapped in here as the default.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: epub2pdf
+  labels:
+    app.kubernetes.io/name: epub2pdf-worker
+    app.kubernetes.io/part-of: epub2pdf-platform
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: epub2pdf-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: epub2pdf-worker
+        app.kubernetes.io/part-of: epub2pdf-platform
+        app.kubernetes.io/component: worker
+      annotations:
+        # See the matching annotation in 10-api.yaml - same assumption
+        # (this pod scraped under job="epub2pdf-worker").
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3001"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      # Give in-flight conversions (up to CHROME_TIMEOUT_MS=10min /
+      # CALIBRE_TIMEOUT_MS=20min in packages/shared/src/constants.js) a
+      # chance to finish before the pod is force-killed on a rolling
+      # deploy/scale-down. packages/worker/src/index.js's SIGTERM handler
+      # waits for the BullMQ Worker(s) to close (in-flight jobs to drain)
+      # before exiting; this just gives it enough wall-clock room to do so.
+      # Tune down if that's too conservative for your deploy cadence.
+      terminationGracePeriodSeconds: 1200
+      containers:
+        - name: worker
+          # Placeholder - see the same note in 10-api.yaml.
+          image: ghcr.io/OWNER/REPO/worker:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: epub2pdf-config
+            - secretRef:
+                name: epub2pdf-secrets
+          env:
+            # NOT redundant with any runtime default - a container's kernel
+            # hostname (which Kubernetes does set to the pod name) and its
+            # HOSTNAME *environment variable* are two unrelated things;
+            # nothing populates the latter for a plain `["node", ...]` exec
+            # CMD with no shell in between (bash sets HOSTNAME as a shell
+            # variable at login, but nothing here invokes a shell - see
+            # packages/worker/Dockerfile's ENTRYPOINT). Without this entry,
+            # process.env.HOSTNAME would be undefined in every worker pod,
+            # and processConversionJob.js's workerId (`${HOSTNAME}-${pid}`
+            # in its per-attempt log lines) would collapse to the same
+            # `worker-<pid>` string across different pods, since PIDs are
+            # small and often coincide across containers. This Downward API
+            # entry is what actually makes that identifier unique per pod.
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            # Spec only requires dropping NET_RAW; ALL is a strict superset
+            # of that. Nothing added back - in particular, do NOT add
+            # CAP_SYS_ADMIN to try to re-enable Chromium's setuid sandbox
+            # instead of running as non-root: packages/worker/src/engines/chrome.js
+            # already launches Chromium with --no-sandbox
+            # --disable-setuid-sandbox, and that combination (no-sandbox +
+            # non-root + capabilities dropped) is the more standard, safer
+            # posture for containerized headless Chromium than granting
+            # SYS_ADMIN back to a container.
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            # TEMP_DIR (see 01-configmap.yaml), Chromium's own scratch
+            # space (--disable-dev-shm-usage in chrome.js redirects its
+            # /dev/shm usage here instead, dodging Docker's tiny 64MB
+            # default /dev/shm), and - via HOME=/tmp set in
+            # packages/worker/Dockerfile - Calibre's ~/.config /
+            # ~/.cache all need a writable /tmp, which readOnlyRootFilesystem
+            # above would otherwise remove.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            # Disk-backed (the default), not `medium: Memory` - large
+            # enough for Chromium + Calibre scratch space + in-flight
+            # EPUB/PDF temp files without eating into the pod's 8Gi memory
+            # limit the way a tmpfs-backed emptyDir would.
+            sizeLimit: 4Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker
+  namespace: epub2pdf
+  labels:
+    app.kubernetes.io/name: epub2pdf-worker
+    app.kubernetes.io/part-of: epub2pdf-platform
+    app.kubernetes.io/component: worker
+spec:
+  # ClusterIP only - no public HTTP port for the worker (per spec). This
+  # exists for in-cluster access to the health/metrics server (e.g. a
+  # ServiceMonitor, or `kubectl port-forward` for debugging); it is
+  # deliberately not referenced by infra/k8s/40-ingress.yaml.
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: epub2pdf-worker
+  ports:
+    - name: http
+      port: 3001
+      targetPort: http
+---
+# Requires the KEDA CRDs (keda.sh/v1alpha1) - see the file-level comment
+# above. If KEDA isn't installed yet, `kubectl apply` of this one object
+# will fail with a "no matches for kind ScaledObject" error while
+# everything else in this directory still applies fine.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker
+  namespace: epub2pdf
+  labels:
+    app.kubernetes.io/name: epub2pdf-worker
+    app.kubernetes.io/part-of: epub2pdf-platform
+    app.kubernetes.io/component: worker
+spec:
+  scaleTargetRef:
+    name: worker
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  pollingInterval: 15 # seconds between metric checks
+  cooldownPeriod: 300 # seconds below threshold before scaling back down
+  triggers:
+    # 1. CPU utilization, 70% - KEDA's `cpu` trigger type maps straight
+    #    onto a standard `type: Resource` HPA metric, same as 10-api.yaml's
+    #    plain HPA. This one alone needs nothing beyond metrics-server.
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "70"
+    # 2. queue_length > 1000 - see the big caveat at the top of this file:
+    #    this metric isn't emitted by the worker yet. serverAddress below
+    #    is a placeholder in-cluster Prometheus Service DNS name; point it
+    #    at wherever infra/prometheus's rules actually get evaluated
+    #    (this repo doesn't ship a Prometheus Deployment/scrape config,
+    #    only the alerting rules in infra/prometheus/alerts.yaml).
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus-server.monitoring.svc.cluster.local:9090
+        metricName: worker_queue_length # name KEDA exposes to the HPA it manages; can differ from the PromQL query below
+        query: queue_length
+        threshold: "1000"

@@ -1,0 +1,190 @@
+# infra/k8s/30-web.yaml
+#
+# Deployment + Service + HorizontalPodAutoscaler for packages/web (the
+# Next.js/App Router frontend, built by a parallel workstream). Checked
+# against the real packages/web/package.json + packages/web/Dockerfile
+# (both landed while this file was being written) rather than guessed:
+# port 3000, the runAsUser/runAsGroup/fsGroup below, and the
+# NEXT_PUBLIC_API_BASE_URL build-time-env handling are all confirmed
+# against that Dockerfile, not assumptions. Only the health check path
+# (below) remains a judgment call - packages/web/app has no dedicated
+# health route as of this writing.
+#
+# Resources are deliberately lighter than api/worker (not specified by the
+# infra spec beyond "your judgment") - a Next.js SSR frontend with no
+# EPUB/PDF processing of its own doesn't need anywhere near 2-4 CPUs /
+# 4-8Gi baseline. Adjust once you have real traffic/profiling data.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: epub2pdf
+  labels:
+    app.kubernetes.io/name: epub2pdf-web
+    app.kubernetes.io/part-of: epub2pdf-platform
+    app.kubernetes.io/component: web
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: epub2pdf-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: epub2pdf-web
+        app.kubernetes.io/part-of: epub2pdf-platform
+        app.kubernetes.io/component: web
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        # NOT 1000/the official-image "node" user here - unlike
+        # packages/api/Dockerfile and packages/worker/Dockerfile (both
+        # `node:*` base images, whose pre-created `node` user is
+        # uid/gid 1000), packages/web/Dockerfile builds its OWN user via
+        # `addgroup --gid 1001 nodejs && adduser --uid 1001 nextjs` and
+        # `COPY --chown=nextjs:nodejs`. Setting this to 1000 here would
+        # make the pod run as a uid that doesn't own its own application
+        # files under that image's readOnlyRootFilesystem - checked against
+        # the real Dockerfile, not guessed.
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: web
+          # Placeholder - packages/web/Dockerfile now exists (built by the
+          # web workstream); .github/workflows/ci.yml builds and pushes it
+          # to ghcr.io/<owner>/<repo>/web:<sha> (and :latest) on pushes to
+          # main. Point this at your actual registry path (or template it
+          # via Kustomize/Helm/your GitOps tool instead of hand-editing
+          # this file per release) - same as 10-api.yaml / 20-worker.yaml.
+          image: ghcr.io/OWNER/REPO/web:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            # Confirmed against packages/web/package.json's `"start": "next
+            # start -p 3000"` - update if that script's -p flag ever changes.
+            - name: http
+              containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: "production"
+          # NOTE ON API BASE URL - deliberately NOT set as a runtime env var
+          # here: NEXT_PUBLIC_API_BASE_URL (packages/web/.env.example) is
+          # inlined into the client JS bundle at `next build` time - a
+          # Kubernetes-level `env:` entry would be silently ignored by the
+          # already-built app. Confirmed against packages/web/Dockerfile's
+          # own header comment, which independently says the same thing: it
+          # must be passed as a Docker build ARG instead, e.g. `docker build
+          # --build-arg NEXT_PUBLIC_API_BASE_URL=https://epub2pdf.example.com/api/v1
+          # -f packages/web/Dockerfile .` (see infra/k8s/40-ingress.yaml -
+          # the api Service is reachable at that same host under /api). That
+          # makes it one value baked in per image, not something this
+          # Deployment can override per environment without a rebuild - if
+          # you need one image promoted across dev/staging/prod with
+          # different API URLs, that's a real constraint to raise with the
+          # web workstream (options: Next.js runtime public config, an
+          # `/api/config` endpoint the client fetches on load, or building
+          # one image per environment). Get the build ARG right before
+          # shipping this: packages/web/lib/apiClient.js's getApiBaseUrl()
+          # falls back to `http://localhost:3000` if
+          # NEXT_PUBLIC_API_BASE_URL was never set at build time - from a
+          # real user's browser, "localhost" means their own machine, so a
+          # forgotten build ARG doesn't degrade gracefully, it breaks every
+          # API call for every user of that image.
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          livenessProbe:
+            # packages/web/app has no dedicated health route (checked: just
+            # page.jsx/layout.jsx/error.jsx/not-found.jsx and the
+            # jobs/upload/settings pages - no app/api/health/route.js).
+            # httpGet / is a reasonable stand-in (there's always something
+            # served at the root), but swap this for a dedicated route once
+            # one exists, for a signal that doesn't depend on successfully
+            # rendering the actual homepage (which itself calls the api's
+            # /api/v1/jobs via packages/web/lib/apiClient.js client-side, so
+            # a bare `/` 200 doesn't fully prove the api is reachable
+            # either - a real health route could check that too).
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+            # Checked packages/web/app: page.jsx/jobs/upload/settings are
+            # all per-user dynamic dashboard views (job status, uploads) -
+            # not static-generation/ISR candidates, and nothing in
+            # next.config.js configures revalidation. So this probably
+            # doesn't need an extra writable mount for a Next.js cache dir
+            # in practice, but if that ever changes: standalone output
+            # (packages/web/Dockerfile) runs as WORKDIR /app with the app
+            # under ./packages/web, so it'd be a second emptyDir mounted at
+            # /app/packages/web/.next/cache (readOnlyRootFilesystem above
+            # would otherwise block writes there).
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: epub2pdf
+  labels:
+    app.kubernetes.io/name: epub2pdf-web
+    app.kubernetes.io/part-of: epub2pdf-platform
+    app.kubernetes.io/component: web
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: epub2pdf-web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web
+  namespace: epub2pdf
+  labels:
+    app.kubernetes.io/name: epub2pdf-web
+    app.kubernetes.io/part-of: epub2pdf-platform
+    app.kubernetes.io/component: web
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

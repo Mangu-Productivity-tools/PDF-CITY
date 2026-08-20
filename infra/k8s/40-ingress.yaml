@@ -1,0 +1,71 @@
+# infra/k8s/40-ingress.yaml
+#
+# Single host, path-routed to the two public services:
+#   /api  -> api Service (packages/api)
+#   /     -> web Service (packages/web)
+#
+# This matches docs/API_CONTRACT.md's documented base URL,
+# `https://<host>/api/v1`, i.e. the API lives on the SAME host as the
+# frontend under an /api prefix, not a separate api.<host> subdomain.
+#
+# IMPORTANT - do NOT add a rewrite-target annotation (e.g. nginx.ingress.
+# kubernetes.io/rewrite-target) to strip the `/api` prefix before it
+# reaches the api Service. packages/api/src/app.js mounts its versioned
+# router at `app.use('/api/v1', v1)` - it expects the FULL `/api/v1/...`
+# path, not `/v1/...`. Stripping the prefix here would 404 every request.
+#
+# The worker (infra/k8s/20-worker.yaml) is intentionally NOT reachable via
+# this Ingress - it has no public HTTP surface, only an internal
+# health/metrics server. Likewise, api's own /health, /ready and /metrics
+# are mounted at the Express app's root (not under /api/v1 - see app.js)
+# but are deliberately left unrouted here too: kubelet's liveness/readiness
+# probes (10-api.yaml) hit the Pod's containerPort directly and never go
+# through the Ingress/Service at all, and app.js's own comment notes these
+# endpoints should be "restrict[ed] at the network/ingress layer in prod" -
+# i.e. simply not exposing them here is that restriction.
+#
+# Assumes ingress-nginx is installed (`ingressClassName: nginx`) - swap for
+# your controller's class name otherwise (Traefik, AWS ALB Controller,
+# GKE's `gce`, etc. all use a different one and may need different
+# annotations for path-prefix behavior).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: epub2pdf
+  namespace: epub2pdf
+  labels:
+    app.kubernetes.io/part-of: epub2pdf-platform
+  annotations:
+    # Uncomment if cert-manager is installed, to auto-provision the TLS
+    # secret referenced below via ACME/Let's Encrypt:
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    #
+    # Body size: uploads go through multer's in-memory storage up to
+    # MAX_EPUB_SIZE_MB (100MB by default - see 01-configmap.yaml); nginx's
+    # own default client-max-body-size (1MB) would reject those well
+    # before the app-level limit ever gets a chance to.
+    nginx.ingress.kubernetes.io/proxy-body-size: "110m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - epub2pdf.example.com # placeholder - replace with your real hostname
+      secretName: epub2pdf-tls # placeholder - populated by cert-manager, or `kubectl create secret tls`
+  rules:
+    - host: epub2pdf.example.com # placeholder - replace with your real hostname
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 3000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 3000

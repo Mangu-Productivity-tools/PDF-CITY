@@ -1,0 +1,90 @@
+# infra/k8s/01-configmap.yaml
+#
+# Non-secret configuration shared by the api and worker Deployments (see
+# 10-api.yaml / 20-worker.yaml, both consume this in full via `envFrom`).
+# Values/keys are taken from .env.example at the repo root; a couple of
+# extra keys that the app code reads but .env.example doesn't list
+# (CORS_ALLOWED_ORIGINS, PG_POOL_MAX, WORKER_HEALTH_PORT - found by
+# grepping packages/{api,worker}/src for `process.env.`) are included too,
+# each called out below. Secrets (connection strings, credentials, signing
+# keys) live in 02-secret.yaml instead, never here.
+#
+# packages/web isn't wired up to this ConfigMap - its actual runtime config
+# surface isn't known yet (packages/web/package.json is still a
+# placeholder, being scaffolded by a parallel workstream). See 30-web.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: epub2pdf-config
+  namespace: epub2pdf
+  labels:
+    app.kubernetes.io/part-of: epub2pdf-platform
+data:
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+
+  # --- API service ---
+  API_PORT: "3000"
+  # CORS_ALLOWED_ORIGINS is read by packages/api/src/app.js but is not
+  # documented in .env.example. It's a comma-separated allowlist; empty
+  # means the `cors` middleware is configured with `origin: false`
+  # (blocks all cross-origin requests). Fill this in with the deployed
+  # packages/web origin(s) once that's live, e.g.
+  # "https://app.example.com,https://staging-app.example.com".
+  CORS_ALLOWED_ORIGINS: ""
+
+  # --- Worker ---
+  # Not in .env.example; packages/worker/src/healthServer.js defaults to
+  # 3001 if unset. Set explicitly here so it's visible/discoverable
+  # alongside everything else, and so infra/k8s + infra/prometheus stay in
+  # sync with it if it's ever changed.
+  WORKER_HEALTH_PORT: "3001"
+  MAX_CONCURRENT_JOBS: "10"
+
+  # --- Redis / BullMQ ---
+  # REDIS_URL itself is a secret (see 02-secret.yaml) since it can embed
+  # credentials. REDIS_DB_INDEX is listed in .env.example but, as of this
+  # writing, isn't actually read by any packages/{api,worker}/src code
+  # (grepped for `process.env.REDIS_DB_INDEX` - no hits). Kept here for
+  # forward-compatibility/documentation; it currently has no effect.
+  REDIS_DB_INDEX: "0"
+
+  # --- S3 / MinIO-compatible storage ---
+  # Credentials (S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY) are in the Secret.
+  S3_BUCKET_NAME: "epub2pdf-conversions"
+  S3_REGION: "us-east-1"
+  # Point this at your MinIO/self-hosted S3-compatible endpoint; delete the
+  # key entirely (or leave it blank - packages/shared/src/storage.js should
+  # treat unset the same as real AWS S3) when targeting real AWS S3.
+  S3_ENDPOINT: ""
+  # "true" only for MinIO/path-style-only endpoints; "false" for real S3.
+  S3_FORCE_PATH_STYLE: "false"
+
+  # --- Rendering engines ---
+  # Must match the paths actually installed in packages/worker/Dockerfile.
+  CALIBRE_PATH: "/usr/bin/ebook-convert"
+  CHROME_PATH: "/usr/bin/chromium"
+  PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+  PUPPETEER_EXECUTABLE_PATH: "/usr/bin/chromium"
+
+  # --- Limits (see packages/shared/src/constants.js) ---
+  MAX_EPUB_SIZE_MB: "100"
+  MAX_PAGE_COUNT: "2000"
+  MAX_FONT_SIZE_MB: "10"
+  TEMP_DIR: "/tmp/epub2pdf"
+
+  # --- Rate limiting ---
+  RATE_LIMIT_RPM: "60"
+  MAX_CONCURRENT_JOBS_PER_USER: "10"
+
+  # --- Storage lifecycle ---
+  SIGNED_URL_EXPIRY_SECONDS: "86400"
+  OBJECT_RETENTION_DAYS: "30"
+
+  # --- Postgres pool ---
+  # Not in .env.example; packages/{api,worker}/src/db/pool.js defaults to
+  # 10 if unset. 10 per pod x up to 10 HPA-scaled replicas x 2 services is
+  # 200 possible connections at max scale-out - make sure your Postgres
+  # max_connections (and any pgbouncer in front of it) can absorb that
+  # before raising replica ceilings.
+  PG_POOL_MAX: "10"

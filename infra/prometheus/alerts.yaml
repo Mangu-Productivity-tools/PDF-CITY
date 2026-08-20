@@ -1,0 +1,173 @@
+# infra/prometheus/alerts.yaml
+#
+# Written as a Prometheus Operator `PrometheusRule` CRD (the standard,
+# GitOps-friendly way to ship alert rules onto a Kubernetes cluster
+# alongside infra/k8s/). If you're running vanilla Prometheus instead (no
+# Operator), the `spec.groups` block below is byte-for-byte the same schema
+# as a native Prometheus rule file's top-level `groups:` - just lift that
+# block into its own file and reference it from `rule_files:` in
+# prometheus.yml.
+#
+# LABEL ASSUMPTION: every query below distinguishes the api's and worker's
+# metrics by a `job` label (`job="epub2pdf-api"` / `job="epub2pdf-worker"`).
+# This matches the `app.kubernetes.io/name` pod labels + `prometheus.io/*`
+# scrape annotations set in infra/k8s/10-api.yaml and infra/k8s/20-worker.yaml,
+# but this repo doesn't ship the actual Prometheus scrape config/
+# ServiceMonitor that would produce that `job` label - if yours names scrape
+# jobs differently, update the selectors below to match.
+#
+# WHY job= MATTERS HERE SPECIFICALLY: packages/api/src/routes/metrics.js
+# and packages/worker/src/metrics.js both export a counter named
+# `conversion_jobs_started_total`, but with DIFFERENT meanings - the api's
+# counts jobs *submitted* via POST /convert, the worker's counts jobs
+# *picked up* off the queue. They're usually close in value but not
+# interchangeable (e.g. they diverge under backlog). The failure-rate alert
+# below deliberately scopes its `started_total` denominator to
+# job="epub2pdf-worker" to match the (worker-only) `failed_total` numerator
+# - don't drop that label matcher when copying this query elsewhere.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: epub2pdf-alerts
+  namespace: epub2pdf
+  labels:
+    app.kubernetes.io/part-of: epub2pdf-platform
+    # Many kube-prometheus-stack installs only pick up PrometheusRule
+    # objects carrying a specific label (commonly `release: <helm-release-name>`
+    # via the Prometheus CR's ruleSelector) - add that label here if yours
+    # requires it, or this will apply cleanly but silently never get loaded.
+spec:
+  groups:
+    # -----------------------------------------------------------------
+    # Conversion pipeline correctness/health
+    # -----------------------------------------------------------------
+    - name: epub2pdf.conversions
+      rules:
+        - alert: HighConversionFailureRate
+          expr: |
+            (
+              sum(rate(conversion_jobs_failed_total{job="epub2pdf-worker"}[1h]))
+              /
+              sum(rate(conversion_jobs_started_total{job="epub2pdf-worker"}[1h]))
+            ) > 0.05
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Conversion job failure rate is above 5% (1h window)"
+            description: >-
+              {{ $value | humanizePercentage }} of conversion jobs picked up
+              by the worker over the last hour ended in a terminal failure
+              (conversion_jobs_failed_total / conversion_jobs_started_total).
+              Check `error_code` label breakdown on conversion_jobs_failed_total
+              and recent worker logs for the dominant failure cause (e.g. a
+              spike in RENDER_CHROME_FAILED / RENDER_CALIBRE_FAILED / TIMEOUT
+              - see packages/worker/src/lib/errors.js for the full code list).
+              Note: this ratio is NaN (so the alert stays inactive, not
+              false-positive) during windows with ~zero submitted jobs.
+
+        - alert: HighQueueLength
+          # *** NOT YET WIRED UP - queue_length is not currently exported by
+          # any service in this codebase (checked packages/worker/src/metrics.js
+          # and packages/api/src/routes/metrics.js directly - neither
+          # defines it). This rule is written per the infra spec's explicit
+          # instruction using the exact metric name it asked for, but it
+          # will never fire until a Gauge named queue_length (or similar) is
+          # added to packages/worker/src/metrics.js - e.g. populated by
+          # polling BullMQ's `Queue#getJobCounts()` for the
+          # `epub-conversion` queue (QUEUE_NAME in
+          # packages/shared/src/constants.js) - and exposed via the
+          # existing /metrics endpoint. See the longer version of this
+          # caveat in infra/k8s/20-worker.yaml (same metric backs that
+          # file's KEDA scaling trigger) and infra/grafana/dashboard.json's
+          # "Queue Length" panel. Also note: docs/RISKS.md item (b) and
+          # docs/adr/0002-queue-technology.md both call this same
+          # (not-yet-implemented) metric `redis_queue_length`, citing the
+          # source spec directly - reconcile to one name before implementing.
+          expr: queue_length > 1000
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Conversion queue backlog exceeds 1000 jobs"
+            description: >-
+              queue_length has been above 1000 for 10+ minutes. Either
+              conversions aren't keeping up with submissions (check worker
+              replica count / CPU throttling / conversion_jobs_duration_seconds)
+              or a downstream dependency (Postgres, S3/MinIO, Chromium) is
+              stalling job completion. See the KEDA ScaledObject in
+              infra/k8s/20-worker.yaml, which scales worker replicas on this
+              same metric+threshold.
+
+    # -----------------------------------------------------------------
+    # Worker resource health - OOM-kills and high memory usage.
+    # WorkerPodOOMKilled and WorkerContainerMemoryNearLimit intentionally
+    # use kube-state-metrics + cAdvisor/kubelet cgroup metrics rather than
+    # an app-exported one - both are standard, near-universal components of
+    # any Prometheus stack that monitors Kubernetes (kube-prometheus-stack
+    # installs both by default), and they're the only source that can see a
+    # pod get OOM-killed by the kernel from OUTSIDE the process itself
+    # (a killed process can't very well export its own "I was just killed"
+    # metric). WorkerRenderingMemoryHigh below supplements them with the
+    # worker's own real rendering_memory_bytes gauge.
+    # -----------------------------------------------------------------
+    - name: epub2pdf.worker.resources
+      rules:
+        - alert: WorkerPodOOMKilled
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="epub2pdf", container="worker"}[15m]) > 0
+            and
+            kube_pod_container_status_last_terminated_reason{namespace="epub2pdf", container="worker", reason="OOMKilled"} == 1
+          labels:
+            severity: critical
+          annotations:
+            summary: "Worker pod {{ $labels.pod }} was OOM-killed"
+            description: >-
+              Container "worker" in pod {{ $labels.pod }} restarted in the
+              last 15m and its last termination reason was OOMKilled.
+              Current limit is 8Gi (infra/k8s/20-worker.yaml) - check
+              rendering_memory_bytes and conversion job sizes (very large
+              EPUBs / very high page counts) around the restart time. If
+              this is frequent and not just one outlier job, raise the
+              worker's memory limit or add a per-job size/memory guard
+              rather than just increasing MAX_EPUB_SIZE_MB.
+
+        - alert: WorkerContainerMemoryNearLimit
+          expr: |
+            (
+              container_memory_working_set_bytes{namespace="epub2pdf", container="worker"}
+              /
+              on(namespace, pod, container)
+              kube_pod_container_resource_limits{namespace="epub2pdf", container="worker", resource="memory"}
+            ) > 0.9
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Worker pod {{ $labels.pod }} is above 90% of its memory limit"
+            description: >-
+              {{ $labels.pod }}'s working set has been above 90% of its
+              configured memory limit for 10+ minutes - likely headed for an
+              OOM-kill (see WorkerPodOOMKilled) if this continues. Fallback
+              if kube_pod_container_resource_limits isn't available in your
+              kube-state-metrics setup: hardcode the 8Gi limit directly,
+              e.g. `container_memory_working_set_bytes{...} > 0.9 * 8 * 1024 * 1024 * 1024`
+              (but prefer the ratio form above - it stays correct if
+              infra/k8s/20-worker.yaml's limit ever changes).
+
+        - alert: WorkerRenderingMemoryHigh
+          # rendering_memory_bytes (packages/worker/src/metrics.js) is
+          # process.memoryUsage().rss, sampled once per job in the `finally`
+          # block of processConversionJob.js - i.e. a per-job-boundary
+          # snapshot, not a continuous sample, so it won't move mid-job
+          # during one very long-running conversion. Still a useful
+          # app-level trend signal alongside the cgroup-based alert above.
+          expr: rendering_memory_bytes{job="epub2pdf-worker"} > 0.9 * 8 * 1024 * 1024 * 1024
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Worker process {{ $labels.instance }} RSS above 90% of its memory limit"
+            description: >-
+              rendering_memory_bytes has been above ~7.2GiB (90% of the 8Gi
+              container limit) for 10+ minutes on {{ $labels.instance }}.

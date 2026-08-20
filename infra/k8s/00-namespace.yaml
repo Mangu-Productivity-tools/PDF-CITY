@@ -1,0 +1,22 @@
+# infra/k8s/00-namespace.yaml
+#
+# All epub2pdf-platform resources live in this namespace. Applying the
+# whole infra/k8s/ directory in one shot (`kubectl apply -f infra/k8s/`)
+# works because kubectl processes files in filename-sorted order and this
+# one is numbered first, so the namespace exists before anything else in
+# this directory tries to be created inside it.
+#
+# General note that applies to every manifest in this directory: `replicas:
+# 3` is set on each Deployment as the initial/baseline count (per the infra
+# spec), but api and worker are also fronted by an autoscaler (a plain HPA
+# for api/web, a KEDA ScaledObject for worker - see 10-api.yaml,
+# 20-worker.yaml, 30-web.yaml) whose `minReplicas: 2` takes over managing
+# `spec.replicas` shortly after the first deploy. Don't be surprised if the
+# live replica count drifts from the "3" in these files under low load -
+# that's the autoscaler doing its job, not drift/error.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: epub2pdf
+  labels:
+    app.kubernetes.io/part-of: epub2pdf-platform

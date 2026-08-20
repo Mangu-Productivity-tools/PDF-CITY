@@ -1,0 +1,292 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus datasource scraping the epub2pdf-api and epub2pdf-worker pods (see infra/k8s/10-api.yaml and infra/k8s/20-worker.yaml's prometheus.io/* scrape annotations).",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" },
+    { "type": "panel", "id": "stat", "name": "Stat", "version": "" },
+    { "type": "panel", "id": "text", "name": "Text", "version": "" }
+  ],
+  "id": null,
+  "uid": "epub2pdf-overview",
+  "title": "EPUB→PDF Conversion Platform - Overview",
+  "description": "Basic operational dashboard for packages/api + packages/worker. All queries use the actual Prometheus metric names exported by packages/worker/src/metrics.js and packages/api/src/routes/metrics.js, except the Queue Length panel - see its description and the notes panel at the top.",
+  "tags": ["epub2pdf", "conversions"],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Read me",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 4 },
+      "options": {
+        "mode": "markdown",
+        "content": "**Assumptions baked into this dashboard** (see `infra/prometheus/alerts.yaml` for the same notes in more detail):\n- Queries that need to tell the api and worker apart (they both export a `conversion_jobs_started_total` counter, with *different* meanings - submitted-via-API vs. picked-up-by-worker) filter on `job=\"epub2pdf-worker\"` / `job=\"epub2pdf-api\"`, matching the `app.kubernetes.io/name` pod labels + scrape annotations in `infra/k8s/`. Adjust panel queries if your Prometheus scrape config names jobs differently.\n- **Queue Length panel: `queue_length` is not emitted by any service in this codebase as of this writing** (confirmed by reading `packages/worker/src/metrics.js` directly). It will show \"No data\" until that Gauge is added to the worker and exposed via its existing `/metrics` endpoint - see `infra/k8s/20-worker.yaml`'s ScaledObject comment for the recommended implementation (poll BullMQ's `Queue#getJobCounts()`). Note also: `docs/RISKS.md` and `docs/adr/0002-queue-technology.md` cite the source spec's name for this same metric as `redis_queue_length` - reconcile to one canonical name when it's implemented, and update this panel's query to match."
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Job Throughput",
+      "description": "conversion_jobs_started_total (worker-side: jobs picked up off the queue), conversion_jobs_processed_total and conversion_jobs_failed_total, all packages/worker/src/metrics.js counters, as a per-second rate.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(rate(conversion_jobs_started_total{job=\"epub2pdf-worker\"}[5m]))",
+          "legendFormat": "started (picked up by worker)"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(rate(conversion_jobs_processed_total[5m]))",
+          "legendFormat": "processed (succeeded)"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(rate(conversion_jobs_failed_total[5m]))",
+          "legendFormat": "failed"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Conversion Duration (p50 / p95 / p99)",
+      "description": "Quantiles derived from conversion_jobs_duration_seconds (packages/worker/src/metrics.js Histogram; buckets: 1, 5, 15, 30, 45, 60, 120, 300, 600, 1200 seconds - the max bucket lines up with CALIBRE_TIMEOUT_MS=20min in packages/shared/src/constants.js).",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5, "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.50, sum(rate(conversion_jobs_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.95, sum(rate(conversion_jobs_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.99, sum(rate(conversion_jobs_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Queue Length",
+      "description": "NOT YET WIRED UP: queue_length is not exported by packages/worker/src/metrics.js as of this writing - this panel will show \"No data\" until that Gauge is added (see the notes panel above and infra/k8s/20-worker.yaml). Alert threshold (1000) shown as a reference line once data exists.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 0, "y": 12, "w": 8, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": true,
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "queue_length",
+          "legendFormat": "queue_length"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Active Jobs",
+      "description": "Sum of active_jobs (packages/worker/src/metrics.js Gauge) across all worker replicas - jobs currently mid-conversion right now.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 8, "y": 12, "w": 4, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(active_jobs)",
+          "legendFormat": "active_jobs"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Error Rate",
+      "description": "conversion_jobs_failed_total / conversion_jobs_started_total (both scoped to job=\"epub2pdf-worker\" - see the notes panel above for why). Same ratio as the HighConversionFailureRate alert in infra/prometheus/alerts.yaml, but over a shorter 5m window here for a more responsive graph; the alert itself evaluates over 1h.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": true,
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.02 },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(rate(conversion_jobs_failed_total{job=\"epub2pdf-worker\"}[5m])) / sum(rate(conversion_jobs_started_total{job=\"epub2pdf-worker\"}[5m]))",
+          "legendFormat": "error rate"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Engine Usage (chrome vs calibre)",
+      "description": "engine_usage_total (packages/worker/src/metrics.js Counter, labelled by engine) - useful context alongside failure rate, since RENDER_CHROME_FAILED vs RENDER_CALIBRE_FAILED usually have different root causes. Bonus panel, not one of the required five.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 0, "y": 20, "w": 8, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 20, "stacking": { "mode": "normal" }, "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum by (engine) (rate(engine_usage_total[5m]))",
+          "legendFormat": "{{engine}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "API Request Duration (p95, by route)",
+      "description": "http_request_duration_seconds (packages/api/src/routes/metrics.js Histogram, labelled by method/route/status_code). Bonus panel, not one of the required five - included since it's a real exported metric and pairs naturally with the worker-side duration panel.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "x": 8, "y": 20, "w": 16, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5, "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"epub2pdf-api\"}[5m])) by (le, route))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    }
+  ],
+  "templating": { "list": [] },
+  "annotations": { "list": [] }
+}

@@ -1,0 +1,149 @@
+# infra/k8s/10-api.yaml
+#
+# Deployment + Service + HorizontalPodAutoscaler for packages/api.
+# Scaling here only needs the standard `metrics-server` add-on (CPU
+# utilization is a built-in "resource" metric type) - contrast with
+# 20-worker.yaml, which additionally scales on a custom metric and needs
+# KEDA or the Prometheus Adapter.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: epub2pdf
+  labels:
+    app.kubernetes.io/name: epub2pdf-api
+    app.kubernetes.io/part-of: epub2pdf-platform
+    app.kubernetes.io/component: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: epub2pdf-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: epub2pdf-api
+        app.kubernetes.io/part-of: epub2pdf-platform
+        app.kubernetes.io/component: api
+      annotations:
+        # Annotation-based scrape discovery, for a Prometheus deployed with
+        # a typical `kubernetes_sd_configs: role: pod` scrape job that
+        # relabels on these (this repo doesn't ship that scrape config or a
+        # Prometheus/Grafana Deployment itself - only the alerting rules in
+        # infra/prometheus/ and the dashboard in infra/grafana/, both of
+        # which assume this pod ends up scraped under `job="epub2pdf-api"`;
+        # adjust their selectors if your scrape setup names jobs
+        # differently, e.g. a ServiceMonitor/PodMonitor via the Prometheus
+        # Operator instead of annotation-based discovery).
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          # Placeholder - .github/workflows/ci.yml pushes to
+          # ghcr.io/<owner>/<repo>/api:<sha> (and :latest) on pushes to
+          # main. Point this at your actual registry path (or template it
+          # via Kustomize/Helm/your GitOps tool instead of hand-editing
+          # this file per release).
+          image: ghcr.io/OWNER/REPO/api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: epub2pdf-config
+            - secretRef:
+                name: epub2pdf-secrets
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            # Spec only requires dropping NET_RAW; dropping ALL is a strict
+            # superset (NET_RAW included) and is the more defensible
+            # default - nothing added back, since Express/Node doesn't need
+            # any Linux capability to bind a port >1024 (3000) or otherwise.
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # multer is configured with memoryStorage() (see
+        # packages/api/src/routes/convert.js) so this isn't load-bearing for
+        # uploads, but readOnlyRootFilesystem: true above means SOMETHING
+        # writable has to exist at /tmp for any incidental scratch use.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: epub2pdf
+  labels:
+    app.kubernetes.io/name: epub2pdf-api
+    app.kubernetes.io/part-of: epub2pdf-platform
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: epub2pdf-api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+  namespace: epub2pdf
+  labels:
+    app.kubernetes.io/name: epub2pdf-api
+    app.kubernetes.io/part-of: epub2pdf-platform
+    app.kubernetes.io/component: api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
