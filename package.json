@@ -1,0 +1,25 @@
+{
+  "name": "epub2pdf-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "EPUB to PDF Conversion Platform - monorepo (api, worker, web, shared)",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "migrate": "node scripts/migrate.js",
+    "dev:api": "npm run dev --workspace packages/api",
+    "dev:worker": "npm run dev --workspace packages/worker",
+    "dev:web": "npm run dev --workspace packages/web",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "smoke-test": "node scripts/smoke-test.js",
+    "infra:up": "docker compose up -d postgres redis minio minio-createbucket",
+    "infra:down": "docker compose down"
+  },
+  "license": "UNLICENSED"
+}
