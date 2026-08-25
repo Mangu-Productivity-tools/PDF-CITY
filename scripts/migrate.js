@@ -13,7 +13,10 @@ import path from 'node:path';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsDir = path.join(__dirname, '..', 'db', 'migrations');
 
-const connectionString = process.env.POSTGRES_URL || 'postgres://postgres:postgres@localhost:5432/epub2pdf';
+const connectionString =
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_URL ||
+  'postgres://postgres:postgres@localhost:5432/epub2pdf';
 
 async function main() {
   const client = new pg.Client({ connectionString });

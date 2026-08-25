@@ -1,0 +1,47 @@
+name: Fixture & Unit Smoke Test
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  fixture-smoke:
+    name: Build fixture EPUB + run worker unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build fixture EPUB
+        run: node scripts/fixtures/build-sample-epub.js
+
+      - name: Verify fixture file exists and is a valid zip
+        run: |
+          test -f fixtures/sample.epub
+          # Check ZIP magic bytes PK\x03\x04
+          python3 -c "
+          import sys
+          with open('fixtures/sample.epub','rb') as f:
+              b = f.read(4)
+          assert b[:2] == b'PK', f'Not a ZIP: {b!r}'
+          print(f'fixture OK: {len(open(\"fixtures/sample.epub\",\"rb\").read())} bytes')
+          "
+
+      - name: Run worker unit tests (epub pipeline + ssrf guard)
+        run: npm run test --workspace packages/worker
+
+      - name: Run shared unit tests (hmac + error codes)
+        run: npm run test --workspace packages/shared
+
+      - name: Run api unit tests (validation middleware)
+        run: npm run test --workspace packages/api

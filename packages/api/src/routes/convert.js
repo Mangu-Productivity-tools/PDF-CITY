@@ -82,6 +82,15 @@ router.post('/convert', requireConcurrencyHeadroom, upload.single('file'), async
       parsedOptions = body.options ?? {};
     }
 
+    // ADR 0004: Chrome is the sole verified production engine.
+    // Reject calibre requests until the CLI flag set is validated on a real Docker host.
+    if (parsedOptions.engine === 'calibre') {
+      throw new ApiError(
+        'VALIDATION_ERROR',
+        "engine 'calibre' is not enabled in this environment; use engine 'chrome' (default).",
+      );
+    }
+
     const webhookSecret = callbackUrl ? randomBytes(32).toString('hex') : null;
 
     const job = await createJob({
