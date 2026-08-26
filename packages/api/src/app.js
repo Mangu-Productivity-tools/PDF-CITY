@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import pinoHttp from 'pino-http';
+import { randomUUID } from 'node:crypto';
 import { logger } from './lib/logger.js';
 import { requireAuth, requireScope } from './middleware/auth.js';
 import { requestRateLimiter } from './middleware/rateLimit.js';
@@ -17,6 +18,14 @@ export function createApp() {
 
   app.disable('x-powered-by');
   app.use(helmet());
+
+  // Assign each request a unique ID (echoed in the X-Request-ID response header
+  // and attached to every pino log line for correlation in production).
+  app.use((req, res, next) => {
+    req.id = req.get('x-request-id') || randomUUID();
+    res.set('X-Request-ID', req.id);
+    next();
+  });
   app.use(
     cors({
       origin: (process.env.CORS_ALLOWED_ORIGINS || '').split(',').filter(Boolean) || false,

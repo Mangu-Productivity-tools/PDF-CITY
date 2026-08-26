@@ -218,12 +218,11 @@ spec:
       metricType: Utilization
       metadata:
         value: "70"
-    # 2. queue_length > 1000 - see the big caveat at the top of this file:
-    #    this metric isn't emitted by the worker yet. serverAddress below
-    #    is a placeholder in-cluster Prometheus Service DNS name; point it
-    #    at wherever infra/prometheus's rules actually get evaluated
-    #    (this repo doesn't ship a Prometheus Deployment/scrape config,
-    #    only the alerting rules in infra/prometheus/alerts.yaml).
+    # 2. queue_length > 1000 — emitted by the worker every 15 s via queueLengthGauge
+    #    (packages/worker/src/metrics.js). serverAddress below is a placeholder
+    #    in-cluster Prometheus Service DNS name; point it at wherever your
+    #    Prometheus is deployed (this repo ships alerting rules in
+    #    infra/prometheus/alerts.yaml but does not include a Prometheus Deployment).
     - type: prometheus
       metadata:
         serverAddress: http://prometheus-server.monitoring.svc.cluster.local:9090

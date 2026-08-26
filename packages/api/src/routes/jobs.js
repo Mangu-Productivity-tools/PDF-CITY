@@ -19,8 +19,21 @@ router.get('/jobs', validate(ListJobsQuerySchema, 'query'), async (req, res, nex
   try {
     const { status, from, to, page, page_size: pageSize } = req.query;
     const { rows, total } = await listJobs({ apiKeyId: req.apiKey.id, status, from, to, page, pageSize });
+
+    // Generate signed download URLs for completed jobs in parallel.
+    const storage = createStorageClient();
+    const jobResponses = await Promise.all(
+      rows.map(async (r) => {
+        let downloadUrl;
+        if (r.status === 'completed' && r.output_key) {
+          downloadUrl = await storage.getSignedDownloadUrl(r.output_key).catch(() => null);
+        }
+        return toJobResponse(r, { downloadUrl });
+      }),
+    );
+
     res.json({
-      jobs: rows.map((r) => toJobResponse(r)),
+      jobs: jobResponses,
       page,
       page_size: pageSize,
       total,
