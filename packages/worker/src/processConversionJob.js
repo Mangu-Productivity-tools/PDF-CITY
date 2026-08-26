@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { PDFDocument } from 'pdf-lib';
-import { createStorageClient } from '@epub2pdf/shared';
+import { createStorageClient, LIMITS } from '@epub2pdf/shared';
 import { createJobTempDir, cleanupTempDir } from './lib/tempDir.js';
 import { downloadSource } from './lib/download.js';
 import { extractEpub } from './epub/extract.js';
@@ -94,6 +94,12 @@ export async function processConversionJob(bullJob) {
       pageCount = pdfDoc.getPageCount();
     } catch (err) {
       log.warn({ err }, 'could not introspect generated PDF page count');
+    }
+    if (pageCount !== null && pageCount > LIMITS.MAX_PAGE_COUNT) {
+      throw new WorkerError(
+        'CONVERSION_FAILED',
+        `Generated PDF has ${pageCount} pages, which exceeds the maximum of ${LIMITS.MAX_PAGE_COUNT}.`,
+      );
     }
 
     const storage = createStorageClient();

@@ -1,6 +1,6 @@
 -- 002_logs_and_webhooks.sql
 -- Optional structured log + webhook delivery tracking. 30-day retention
--- (see scripts/retention-cleanup.js and docs/COMPLIANCE.md).
+-- (see scripts/cleanup.js and docs/COMPLIANCE.md).
 
 CREATE TABLE IF NOT EXISTS conversion_logs (
   id              BIGSERIAL PRIMARY KEY,

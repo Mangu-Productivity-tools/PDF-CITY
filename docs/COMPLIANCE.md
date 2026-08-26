@@ -32,7 +32,7 @@ data-subject-access and deletion-accounting requirements.
 
 **Known gap**: `expires_at` is computed and stored correctly, but nothing in
 this repository currently *acts* on it. `db/migrations/002_logs_and_webhooks.sql`
-references a `scripts/retention-cleanup.js` in a comment, but that script does
+references `scripts/cleanup.js` in a comment, but that script does
 not exist in this repository yet. In practice, today, a completed job's PDF and
 database row persist indefinitely past their `expires_at` date unless a caller
 explicitly deletes them. Signed download URLs still expire independently after

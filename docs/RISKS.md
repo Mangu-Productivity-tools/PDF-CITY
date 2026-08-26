@@ -96,7 +96,7 @@ legal answer, not just a citation, before wide distribution.
   multipart submissions, the original EPUB) in storage. `OBJECT_RETENTION_DAYS`
   (30 by default) and `expires_at` exist to bound this, but as documented in
   `docs/COMPLIANCE.md`, nothing currently sweeps expired objects/rows —
-  `scripts/retention-cleanup.js`, referenced in a migration comment, does not
+  `scripts/cleanup.js`, referenced in a migration comment, does not
   exist yet. Left unaddressed, storage cost grows unbounded with job volume
   rather than plateauing at a 30-day rolling window. **Mitigation**: build the
   retention sweep job before this goes to meaningful production volume; it's

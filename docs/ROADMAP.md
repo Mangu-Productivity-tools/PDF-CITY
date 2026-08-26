@@ -110,7 +110,7 @@ put in front of paying enterprise customers unsupervised":
 - **Automate the retention/deletion policy** — `expires_at` is computed and
   stored correctly on job completion, but nothing currently sweeps expired
   rows/objects; `db/migrations/002_logs_and_webhooks.sql` references a
-  `scripts/retention-cleanup.js` that does not exist in this repository yet.
+  `scripts/cleanup.js` (implemented; see `docs/OPERATIONS.md` § Data Retention).
   See `docs/COMPLIANCE.md`.
 - **Additional formats** — the PRD's Phase 2/3 language (DOCX, HTML) beyond
   EPUB → PDF. Not started; would require new extraction/assembly logic per

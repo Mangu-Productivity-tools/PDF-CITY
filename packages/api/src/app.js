@@ -3,7 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import pinoHttp from 'pino-http';
 import { logger } from './lib/logger.js';
-import { requireAuth } from './middleware/auth.js';
+import { requireAuth, requireScope } from './middleware/auth.js';
 import { requestRateLimiter } from './middleware/rateLimit.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import convertRoute from './routes/convert.js';
@@ -45,6 +45,7 @@ export function createApp() {
 
   const v1 = express.Router();
   v1.use(requireAuth);
+  v1.use(requireScope('convert'));
   v1.use(requestRateLimiter);
   v1.use(convertRoute); // declares POST /convert itself; concurrency check is applied inside the route
   v1.use(statusRoute);
