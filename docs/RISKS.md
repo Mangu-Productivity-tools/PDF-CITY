@@ -94,30 +94,20 @@ legal answer, not just a citation, before wide distribution.
 
 - **S3 storage cost growth.** Every completed job leaves a PDF (and, for
   multipart submissions, the original EPUB) in storage. `OBJECT_RETENTION_DAYS`
-  (30 by default) and `expires_at` exist to bound this, but as documented in
-  `docs/COMPLIANCE.md`, nothing currently sweeps expired objects/rows —
-  `scripts/cleanup.js`, referenced in a migration comment, does not
-  exist yet. Left unaddressed, storage cost grows unbounded with job volume
-  rather than plateauing at a 30-day rolling window. **Mitigation**: build the
-  retention sweep job before this goes to meaningful production volume; it's
-  already tracked in `docs/ROADMAP.md` Phase 2.
+  (30 by default) and `expires_at` exist to bound this. `scripts/cleanup.js`
+  implements the batched deletion sweep; wire it as a cron job or scheduled
+  task (see `docs/OPERATIONS.md` § Data Retention) before production volume
+  becomes meaningful, so storage plateaus at a 30-day rolling window rather
+  than growing unbounded.
 
 - **Worker OOM on very large EPUBs.** `MAX_EPUB_SIZE_MB` (100MB default) is
   enforced at upload time (`multer`'s `fileSize` limit in
-  `packages/api/src/routes/convert.js`), but `MAX_PAGE_COUNT` (2000) and
-  `MAX_FONT_SIZE_MB` (10) are defined in `packages/shared/src/constants.js` and
-  are **not enforced anywhere in the pipeline** — nothing currently checks
-  spine length, page count, or embedded font size before handing a file to
-  Chrome or Calibre. A 100MB EPUB that is mostly high-resolution images or has
-  an unusually large spine can still cause the rendering engine to consume
-  large amounts of memory, and the worker has no per-job memory ceiling of its
-  own beyond whatever the container/process limits impose. **Mitigation**:
-  enforce `MAX_PAGE_COUNT`/`MAX_FONT_SIZE_MB` (or an equivalent heuristic, e.g.
-  total extracted-content size) before rendering; set container memory limits
-  and let Kubernetes OOM-kill and restart the worker pod as a backstop (BullMQ
-  will pick the job back up as a retry, bounded by `JOB_ATTEMPTS`); consider a
-  per-job timeout tighter than the current 10-minute Chrome / 20-minute
-  Calibre ceilings for pathological inputs.
+  `packages/api/src/routes/convert.js`). `MAX_PAGE_COUNT` (2000) is now
+  enforced post-render in `processConversionJob.js`. `MAX_FONT_SIZE_MB` (10)
+  is enforced pre-render in `processConversionJob.js` by summing font files
+  (woff/woff2/ttf/otf/eot) in the extracted EPUB directory. A 100MB EPUB that
+  is mostly high-resolution images can still cause OOM; container memory limits
+  and Kubernetes OOM-kill with BullMQ retry remain the primary backstop.
 
 - **`file_url` fetches are now IP-range-restricted, but not fully closed
   against DNS rebinding.** `packages/worker/src/lib/ssrfGuard.js` rejects

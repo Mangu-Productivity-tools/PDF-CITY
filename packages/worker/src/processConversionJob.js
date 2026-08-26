@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { readdir, stat, readFile } from 'node:fs/promises';
 import { PDFDocument } from 'pdf-lib';
 import { createStorageClient, LIMITS } from '@epub2pdf/shared';
 import { createJobTempDir, cleanupTempDir } from './lib/tempDir.js';
@@ -31,6 +31,21 @@ import {
   renderingMemoryBytesGauge,
 } from './metrics.js';
 import { logger } from './lib/logger.js';
+
+const FONT_EXTENSIONS = new Set(['.woff', '.woff2', '.ttf', '.otf', '.eot']);
+
+async function sumFontBytes(dir) {
+  let total = 0;
+  const entries = await readdir(dir, { withFileTypes: true, recursive: true });
+  for (const entry of entries) {
+    if (entry.isFile() && FONT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+      const filePath = path.join(entry.parentPath ?? entry.path, entry.name);
+      const { size } = await stat(filePath);
+      total += size;
+    }
+  }
+  return total;
+}
 
 /**
  * BullMQ processor for the `epub-conversion` queue. One call = one attempt
@@ -71,6 +86,15 @@ export async function processConversionJob(bullJob) {
     extractEpub(epubPath, tempDir);
     if (detectDrm(tempDir)) {
       throw new WorkerError('DRM_NOT_SUPPORTED', 'This EPUB is DRM-protected and cannot be converted.');
+    }
+
+    const fontBytes = await sumFontBytes(tempDir);
+    const fontLimitBytes = LIMITS.MAX_FONT_SIZE_MB * 1024 * 1024;
+    if (fontBytes > fontLimitBytes) {
+      throw new WorkerError(
+        'CONVERSION_FAILED',
+        `Embedded fonts total ${(fontBytes / 1024 / 1024).toFixed(1)} MB, exceeding the ${LIMITS.MAX_FONT_SIZE_MB} MB limit.`,
+      );
     }
     await setProgress(jobId, 30);
 
