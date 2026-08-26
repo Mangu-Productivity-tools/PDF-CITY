@@ -74,6 +74,14 @@ test('requireScope returns 403 when scope does not match', () => {
   assert.equal(res.body.error_code, 'FORBIDDEN');
 });
 
+test('requireScope allows admin scope regardless of required scope', () => {
+  const req = { apiKey: { scope: 'admin' } };
+  const res = makeRes();
+  let nextCalled = false;
+  requireScope('convert')(req, res, () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+});
+
 // ---- errorHandler ----
 
 test('errorHandler maps ApiError to its documented HTTP status', () => {

@@ -1,0 +1,97 @@
+# infra/k8s/50-cleanup-cronjob.yaml
+#
+# Kubernetes CronJob that runs scripts/cleanup.js once a day to delete
+# expired conversion_jobs rows and their S3 artifacts. This enforces the
+# OBJECT_RETENTION_DAYS (30-day default) window described in
+# docs/COMPLIANCE.md and docs/OPERATIONS.md.
+#
+# The job shares the api image because cleanup.js only needs pg + S3 access
+# (no Chrome, no BullMQ worker). If you build a separate "tools" image,
+# update the image field below.
+#
+# Secret and ConfigMap refs match 02-secret.yaml / 01-configmap.yaml.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: retention-cleanup
+  namespace: epub2pdf
+  labels:
+    app.kubernetes.io/name: epub2pdf-retention-cleanup
+    app.kubernetes.io/part-of: epub2pdf-platform
+    app.kubernetes.io/component: maintenance
+spec:
+  # Run daily at 03:00 UTC — off-peak, before the weekly audit on Mondays.
+  schedule: "0 3 * * *"
+  # Keep only the last 3 successful and 1 failed job log for troubleshooting.
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  # If the previous run is still going, skip rather than run in parallel.
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      # 30-minute hard deadline — cleanup should never take this long; if it
+      # does, something is wrong and the pod should be killed.
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: epub2pdf-retention-cleanup
+            app.kubernetes.io/component: maintenance
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: cleanup
+              image: ghcr.io/OWNER/REPO/api:latest
+              imagePullPolicy: IfNotPresent
+              command: ["node", "scripts/cleanup.js"]
+              args: ["--batch-size=200"]
+              env:
+                - name: POSTGRES_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: epub2pdf-secrets
+                      key: POSTGRES_URL
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: epub2pdf-secrets
+                      key: AWS_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: epub2pdf-secrets
+                      key: AWS_SECRET_ACCESS_KEY
+                - name: AWS_REGION
+                  valueFrom:
+                    configMapKeyRef:
+                      name: epub2pdf-config
+                      key: AWS_REGION
+                - name: S3_BUCKET
+                  valueFrom:
+                    configMapKeyRef:
+                      name: epub2pdf-config
+                      key: S3_BUCKET
+                - name: S3_ENDPOINT
+                  valueFrom:
+                    configMapKeyRef:
+                      name: epub2pdf-config
+                      key: S3_ENDPOINT
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
