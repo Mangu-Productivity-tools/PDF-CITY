@@ -6,7 +6,7 @@ schemas/constants both depend on. If you change a route, update this file in the
 same commit.
 
 Base URL: `https://<host>/api/v1`
-Auth: `Authorization: Bearer <API_KEY>` on every endpoint except `/health` and `/ready`.
+Auth: `Authorization: Bearer <API_KEY>` on every endpoint except `/health`, `/ready`, and `GET /status/{job_id}`.
 
 ## Job object
 
@@ -43,11 +43,16 @@ Response `201 Created` (+ `Location: /api/v1/status/{job_id}` header):
 ```
 
 ### `GET /status/{job_id}`
-Response `200`: the Job object above.
+**Public endpoint — no `Authorization` header required.** The UUID acts as a
+capability token. Response `200`: the Job object above, including `download_url`
+(signed URL) when `status` is `completed`.
 
 ### `GET /jobs`
 Query: `status`, `from`, `to` (ISO 8601), `page` (default 1), `page_size` (default 20, max 100).
 Response `200`: `{ "jobs": [Job, ...], "page": 1, "page_size": 20, "total": 42 }`
+
+### `GET /jobs/{job_id}`
+Single job lookup. `404` if not found or owned by a different API key.
 
 ### `GET /jobs/{job_id}/download`
 `302` redirect to the signed storage URL, or `200` with `{ "download_url": "..." }`
@@ -57,9 +62,9 @@ if `Accept: application/json`.
 Cancels a queued/processing job or deletes a completed one's record + storage
 object. Response `204`.
 
-### `PUT /jobs/{job_id}`
+### `PATCH /jobs/{job_id}`
 Update `options` before processing has started (i.e. job still `queued`).
-`409 CONFLICT` (`error_code: JOB_ALREADY_STARTED`) otherwise. Response `200` with
+`400 VALIDATION_ERROR` if the job has already started. Response `200` with
 the updated Job.
 
 ### `GET /health`, `GET /ready`
