@@ -42,13 +42,15 @@ export function createApp() {
   // Unauthenticated: liveness/readiness/metrics (restrict at the network/ingress layer in prod).
   app.use(healthRoutes);
   app.use(metricsRoutes);
+  // Public job-status polling — no API key required.  Mounted on /api/v1
+  // directly so the path matches, but outside the auth middleware.
+  app.use('/api/v1', statusRoute);
 
   const v1 = express.Router();
   v1.use(requireAuth);
   v1.use(requireScope('convert'));
   v1.use(requestRateLimiter);
   v1.use(convertRoute); // declares POST /convert itself; concurrency check is applied inside the route
-  v1.use(statusRoute);
   v1.use(jobsRoutes);
 
   app.use('/api/v1', v1);

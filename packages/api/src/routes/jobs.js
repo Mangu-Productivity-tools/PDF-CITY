@@ -30,6 +30,16 @@ router.get('/jobs', validate(ListJobsQuerySchema, 'query'), async (req, res, nex
   }
 });
 
+router.get('/jobs/:job_id', async (req, res, next) => {
+  try {
+    const job = await getJobById(req.params.job_id);
+    if (!job || job.api_key_id !== req.apiKey.id) throw new ApiError('NOT_FOUND');
+    res.json(toJobResponse(job));
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/jobs/:job_id/download', async (req, res, next) => {
   try {
     const job = await getJobById(req.params.job_id);
@@ -76,7 +86,7 @@ router.delete('/jobs/:job_id', async (req, res, next) => {
   }
 });
 
-router.put('/jobs/:job_id', validate(UpdateJobSchema, 'body'), async (req, res, next) => {
+router.patch('/jobs/:job_id', validate(UpdateJobSchema, 'body'), async (req, res, next) => {
   try {
     const updated = await updateJobOptions(req.params.job_id, req.body.options);
     if (!updated) {
@@ -85,6 +95,10 @@ router.put('/jobs/:job_id', validate(UpdateJobSchema, 'body'), async (req, res, 
       if (!existing || existing.api_key_id !== req.apiKey.id) throw new ApiError('NOT_FOUND');
       throw new ApiError('VALIDATION_ERROR', 'Job already started; options can only be updated while queued.');
     }
+    if (updated.api_key_id !== req.apiKey.id) throw new ApiError('NOT_FOUND');
+    await writeAuditLog(req.apiKey.key_prefix, 'job.updated', 'conversion_job', updated.id, {
+      engine: updated.engine,
+    }).catch(() => {});
     res.json(toJobResponse(updated));
   } catch (err) {
     next(err);

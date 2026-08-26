@@ -141,7 +141,7 @@ export const apiClient = {
 
   updateJob(jobId, options) {
     return request(`/api/v1/jobs/${encodeURIComponent(jobId)}`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: { options: buildOptionsPayload(options) },
     });
   },
