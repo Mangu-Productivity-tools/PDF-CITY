@@ -23,35 +23,12 @@
 # `query:` below - ask in #platform before installing a second operator to
 # do the same job KEDA already does here.
 #
-# *** METRIC DEPENDENCY - PLEASE READ: the `queue_length` Prometheus query
-# below does NOT correspond to a metric that packages/worker/src/metrics.js
-# (or anywhere else in this codebase) actually exports as of this writing -
-# confirmed by reading that file directly, which only exports
-# conversion_jobs_started_total, conversion_jobs_failed_total,
-# conversion_jobs_processed_total, conversion_jobs_duration_seconds,
-# active_jobs, engine_usage_total and rendering_memory_bytes. Until a Gauge
-# metric (e.g. named `queue_length`) is added there - populated by
-# periodically polling BullMQ's `Queue#getJobCounts()` /
-# `getWaitingCount()` against the `epub-conversion` queue (QUEUE_NAME in
-# packages/shared/src/constants.js) and set via `client.Gauge`, the same
-# pattern already used for `activeJobsGauge`/`renderingMemoryBytesGauge` in
-# packages/worker/src/processConversionJob.js - and exposed through the
-# already-wired `/metrics` endpoint (packages/worker/src/healthServer.js),
-# this trigger's query returns no series. KEDA treats that as "not active"
-# rather than erroring loudly, so it will silently fall back to CPU-only
-# scaling instead of failing the deploy - meaning a real queue backlog
-# could go unnoticed until CPU also climbs. This is written the way the
-# infra spec asked for (real metric names elsewhere, this one included by
-# explicit instruction) but is flagged here as the single most important
-# follow-up for whoever owns packages/worker next. See the matching caveat
-# in infra/prometheus/alerts.yaml and infra/grafana/dashboard.json.
-#
-# NAMING MISMATCH WITH docs/: docs/RISKS.md item (b) and
-# docs/adr/0002-queue-technology.md both cite the *source spec's* name for
-# this metric as `redis_queue_length`, not `queue_length` - this file uses
-# `queue_length` because that's the exact name given in this infra task's
-# instructions. Same underlying (not-yet-implemented) metric, two different
-# names floating around the repo now - reconcile to one canonical name
+# The `queue_length` Prometheus metric below is exported by the worker as a
+# prom-client Gauge (`packages/worker/src/metrics.js: queueLengthGauge`),
+# refreshed every 15 s via `Queue#getWaitingCount()` in
+# `packages/worker/src/index.js`. It is exposed on the `/metrics` endpoint
+# (packages/worker/src/healthServer.js) and consumed here by KEDA to scale
+# the Deployment when the queue backs up.
 # (in packages/worker/src/metrics.js, and here, and in
 # infra/prometheus/alerts.yaml / infra/grafana/dashboard.json) when it's
 # actually implemented, rather than shipping both.
@@ -241,12 +218,11 @@ spec:
       metricType: Utilization
       metadata:
         value: "70"
-    # 2. queue_length > 1000 - see the big caveat at the top of this file:
-    #    this metric isn't emitted by the worker yet. serverAddress below
-    #    is a placeholder in-cluster Prometheus Service DNS name; point it
-    #    at wherever infra/prometheus's rules actually get evaluated
-    #    (this repo doesn't ship a Prometheus Deployment/scrape config,
-    #    only the alerting rules in infra/prometheus/alerts.yaml).
+    # 2. queue_length > 1000 — emitted by the worker every 15 s via queueLengthGauge
+    #    (packages/worker/src/metrics.js). serverAddress below is a placeholder
+    #    in-cluster Prometheus Service DNS name; point it at wherever your
+    #    Prometheus is deployed (this repo ships alerting rules in
+    #    infra/prometheus/alerts.yaml but does not include a Prometheus Deployment).
     - type: prometheus
       metadata:
         serverAddress: http://prometheus-server.monitoring.svc.cluster.local:9090

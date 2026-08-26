@@ -21,7 +21,7 @@ export async function requireAuth(req, res, next) {
 
 export function requireScope(scope) {
   return (req, res, next) => {
-    if (scope === 'convert' && req.apiKey.scope !== 'convert') {
+    if (req.apiKey.scope !== scope && req.apiKey.scope !== 'admin') {
       return res.status(403).json(errorBody('FORBIDDEN'));
     }
     next();

@@ -1,0 +1,31 @@
+name: Security Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run weekly on Mondays at 08:00 UTC to catch newly-disclosed vulns
+    - cron: "0 8 * * 1"
+
+jobs:
+  audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Audit (high severity and above)
+        # Fail the job if any high or critical vulnerabilities are found.
+        # Use --audit-level=moderate in the advisory URL below to tighten
+        # the threshold once the known moderate-severity backlog is cleared.
+        run: npm audit --audit-level=high

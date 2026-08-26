@@ -32,7 +32,8 @@ export const PageSize = Object.freeze({
 
 // Spec: Environment & Configuration
 export const LIMITS = Object.freeze({
-  MAX_EPUB_SIZE_MB: Number(process.env.MAX_EPUB_SIZE_MB ?? 100),
+  MAX_EPUB_SIZE_MB: Number(process.env.MAX_EPUB_SIZE_MB ?? 100), // multipart upload cap (API-level, pre-queue)
+  MAX_FILE_SIZE_MB: Number(process.env.MAX_FILE_SIZE_MB ?? 10),  // worker download cap (URL-sourced jobs)
   MAX_PAGE_COUNT: Number(process.env.MAX_PAGE_COUNT ?? 2000),
   MAX_FONT_SIZE_MB: Number(process.env.MAX_FONT_SIZE_MB ?? 10),
 });

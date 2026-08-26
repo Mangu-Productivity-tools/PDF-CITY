@@ -11,18 +11,10 @@
 # 3000:3000 epub2pdf-api`, then hit GET /health) in CI or on a real Docker
 # host before deploying.
 #
-# NOTE - NODE 20 IS EOL: this uses node:20-alpine per this task's explicit
-# instruction, but per nodejs.org/en/about/previous-releases, Node 20
-# ("Iron")'s end-of-life date was 2026-04-30 - already past as of this
-# writing, meaning no further upstream security patches. Node 22 ("Jod") is
-# in Maintenance LTS until 2027-04-30 and Node 24 ("Krypton") is the current
-# Active LTS until 2028-04-30 - either would be a one-line base-image tag
-# swap (here and in packages/worker/Dockerfile) if the team wants to move
-# off an EOL runtime; confirm with whoever owns the Node version policy
-# before changing it unilaterally, since the root package.json's `engines`
-# field (currently `>=18`, so it wouldn't block a bump) and CI
-# (.github/workflows/ci.yml's NODE_VERSION) would ideally move together
-# with it for consistency, even though neither strictly forces Node 20.
+# Node 22 ("Jod") is in Active LTS until 2027-04-30. To upgrade to Node 24
+# ("Krypton", current Active LTS until 2028-04-30), swap the base image tags
+# here and in packages/worker/Dockerfile, and update the CI matrix in
+# .github/workflows/ci.yml together.
 #
 # Multi-stage Node 20 image for @epub2pdf/api. Pure JS, no native
 # dependencies that need glibc, so Alpine's smaller footprint is safe here
@@ -37,7 +29,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: install only this service's + packages/shared's dependencies
 # ---------------------------------------------------------------------------
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 WORKDIR /app
 
 # Root manifest + lockfile first, for layer caching.
@@ -72,11 +64,14 @@ RUN npm ci \
 FROM deps AS build
 COPY packages/api/src packages/api/src
 COPY packages/shared/src packages/shared/src
+# cleanup.js is invoked by the retention CronJob (infra/k8s/50-cleanup-cronjob.yaml)
+# using this image. It only needs pg + S3 access, which the API image already has.
+COPY scripts/ scripts/
 
 # ---------------------------------------------------------------------------
 # Stage 3: slim runtime image, non-root
 # ---------------------------------------------------------------------------
-FROM node:20-alpine AS runtime
+FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
@@ -93,6 +88,7 @@ COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --from=build --chown=node:node /app/packages/api ./packages/api
 COPY --from=build --chown=node:node /app/packages/shared ./packages/shared
+COPY --from=build --chown=node:node /app/scripts ./scripts
 
 USER node
 

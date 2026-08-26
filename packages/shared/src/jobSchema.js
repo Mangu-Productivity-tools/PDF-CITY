@@ -15,7 +15,7 @@ export const ConvertOptionsSchema = z.object({
   include_footer: z.boolean().default(true),
   header_template: z.string().max(2000).optional(),
   footer_template: z.string().max(2000).optional(),
-}).partial().default({});
+}).default({});
 
 export const ConvertByUrlSchema = z.object({
   file_url: z.string().url().refine((u) => u.startsWith('https://'), {

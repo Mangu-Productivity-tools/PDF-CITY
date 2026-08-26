@@ -16,7 +16,7 @@
 # browser) and, optionally, Calibre's `ebook-convert` CLI (see
 # packages/worker/src/engines/calibre.js) on the PATH at runtime.
 #
-# Base image: Debian (node:20-slim) - deliberately NOT Alpine and NOT a
+# Base image: Debian (node:22-slim) - deliberately NOT Alpine and NOT a
 # plain Ubuntu image:
 #   - Alpine: musl libc + apk package names don't line up with the
 #     Puppeteer runtime-dependency list this Dockerfile installs below
@@ -26,20 +26,19 @@
 #   - Ubuntu: recent Ubuntu releases replaced the `chromium` *apt* package
 #     with a transitional stub that just pulls in the Snap version, which
 #     does not run inside a plain Docker container (no snapd). Debian -
-#     what node:20-slim is actually built on - still ships a real ELF
+#     what node:22-slim is actually built on - still ships a real ELF
 #     binary via `apt-get install chromium`, which is what we rely on here.
 #
 # Build context for this image is expected to be the REPO ROOT, e.g.:
 #   docker build -f packages/worker/Dockerfile .
 #
-# NOTE - NODE 20 IS EOL: see packages/api/Dockerfile's header comment for
-# the full note (dates, and what a version bump would touch) - same
-# situation here, node:20-slim below.
+# Node 22 Active LTS (until 2027-04-30). See packages/api/Dockerfile for
+# upgrade notes if moving to Node 24.
 
 # ---------------------------------------------------------------------------
 # Stage 1: install only this service's + packages/shared's dependencies
 # ---------------------------------------------------------------------------
-FROM node:20-slim AS deps
+FROM node:22-slim AS deps
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -71,7 +70,7 @@ COPY packages/shared/src packages/shared/src
 # ---------------------------------------------------------------------------
 # Stage 3: runtime image - Chromium + Calibre + Node, non-root
 # ---------------------------------------------------------------------------
-FROM node:20-slim AS runtime
+FROM node:22-slim AS runtime
 WORKDIR /app
 
 # --no-install-recommends keeps this from ballooning further than it

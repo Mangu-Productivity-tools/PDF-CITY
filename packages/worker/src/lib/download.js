@@ -1,8 +1,10 @@
 import { writeFile } from 'node:fs/promises';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
-import { createStorageClient } from '@epub2pdf/shared';
+import { createStorageClient, LIMITS } from '@epub2pdf/shared';
 import { WorkerError } from './errors.js';
 import { fetchPublicHttpsUrl } from './ssrfGuard.js';
+
+const MAX_BYTES = LIMITS.MAX_FILE_SIZE_MB * 1024 * 1024;
 
 /**
  * Fetch the source EPUB referenced by a job's file_url, which is either a
@@ -31,6 +33,23 @@ export async function downloadSource(fileUrl, destPath) {
   // address before fetching - see ssrfGuard.js for what this does and does
   // not protect against.
   const response = await fetchPublicHttpsUrl(fileUrl);
+
+  // Reject oversized files early via Content-Length, and enforce the limit
+  // again while buffering to guard against servers that omit the header.
+  const contentLength = Number(response.headers.get('content-length') ?? 0);
+  if (contentLength > MAX_BYTES) {
+    throw new WorkerError(
+      'PAYLOAD_TOO_LARGE',
+      `file_url content-length (${(contentLength / 1024 / 1024).toFixed(1)} MB) exceeds the ${LIMITS.MAX_FILE_SIZE_MB} MB limit.`,
+    );
+  }
+
   const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length > MAX_BYTES) {
+    throw new WorkerError(
+      'PAYLOAD_TOO_LARGE',
+      `Downloaded file (${(bytes.length / 1024 / 1024).toFixed(1)} MB) exceeds the ${LIMITS.MAX_FILE_SIZE_MB} MB limit.`,
+    );
+  }
   await writeFile(destPath, bytes);
 }

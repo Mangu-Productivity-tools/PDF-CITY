@@ -2,8 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import pinoHttp from 'pino-http';
+import { randomUUID } from 'node:crypto';
 import { logger } from './lib/logger.js';
-import { requireAuth } from './middleware/auth.js';
+import { requireAuth, requireScope } from './middleware/auth.js';
 import { requestRateLimiter } from './middleware/rateLimit.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import convertRoute from './routes/convert.js';
@@ -17,6 +18,14 @@ export function createApp() {
 
   app.disable('x-powered-by');
   app.use(helmet());
+
+  // Assign each request a unique ID (echoed in the X-Request-ID response header
+  // and attached to every pino log line for correlation in production).
+  app.use((req, res, next) => {
+    req.id = req.get('x-request-id') || randomUUID();
+    res.set('X-Request-ID', req.id);
+    next();
+  });
   app.use(
     cors({
       origin: (process.env.CORS_ALLOWED_ORIGINS || '').split(',').filter(Boolean) || false,
@@ -42,12 +51,15 @@ export function createApp() {
   // Unauthenticated: liveness/readiness/metrics (restrict at the network/ingress layer in prod).
   app.use(healthRoutes);
   app.use(metricsRoutes);
+  // Public job-status polling — no API key required.  Mounted on /api/v1
+  // directly so the path matches, but outside the auth middleware.
+  app.use('/api/v1', statusRoute);
 
   const v1 = express.Router();
   v1.use(requireAuth);
+  v1.use(requireScope('convert'));
   v1.use(requestRateLimiter);
   v1.use(convertRoute); // declares POST /convert itself; concurrency check is applied inside the route
-  v1.use(statusRoute);
   v1.use(jobsRoutes);
 
   app.use('/api/v1', v1);

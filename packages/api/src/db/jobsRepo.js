@@ -1,4 +1,5 @@
 import { getPool } from './pool.js';
+import { OBJECT_RETENTION_DAYS } from '@epub2pdf/shared';
 
 function toJobResponse(row, { downloadUrl } = {}) {
   return {
@@ -78,10 +79,11 @@ export async function cancelJob(id) {
   const pool = getPool();
   const { rows } = await pool.query(
     `UPDATE conversion_jobs
-     SET status = 'cancelled'
+     SET status = 'cancelled',
+         expires_at = COALESCE(expires_at, now() + ($2 || ' days')::interval)
      WHERE id = $1 AND status IN ('queued', 'processing')
      RETURNING *`,
-    [id],
+    [id, String(OBJECT_RETENTION_DAYS)],
   );
   return rows[0] ?? null;
 }
@@ -91,14 +93,20 @@ export async function deleteJobRecord(id) {
   await pool.query('DELETE FROM conversion_jobs WHERE id = $1', [id]);
 }
 
-export async function updateJobOptions(id, options) {
+export async function updateJobOptions(id, options, apiKeyId) {
   const pool = getPool();
+  const conditions = apiKeyId
+    ? `WHERE id = $1 AND status = 'queued' AND api_key_id = $4`
+    : `WHERE id = $1 AND status = 'queued'`;
+  const params = apiKeyId
+    ? [id, JSON.stringify(options), options?.engine ?? null, apiKeyId]
+    : [id, JSON.stringify(options), options?.engine ?? null];
   const { rows } = await pool.query(
     `UPDATE conversion_jobs
      SET options = $2, engine = COALESCE($3, engine)
-     WHERE id = $1 AND status = 'queued'
+     ${conditions}
      RETURNING *`,
-    [id, JSON.stringify(options), options?.engine ?? null],
+    params,
   );
   return rows[0] ?? null;
 }
@@ -112,6 +120,13 @@ export async function countActiveJobsForKey(apiKeyId) {
     [apiKeyId],
   );
   return rows[0]?.active ?? 0;
+}
+
+export async function writeAuditLog(actor, action, subjectType, subjectId, details = {}) {
+  await getPool().query(
+    'INSERT INTO audit_log (actor, action, subject_type, subject_id, details) VALUES ($1, $2, $3, $4, $5)',
+    [actor, action, subjectType, subjectId, JSON.stringify(details)],
+  );
 }
 
 export { toJobResponse };

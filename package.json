@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "scripts": {
     "migrate": "node scripts/migrate.js",
@@ -18,8 +18,15 @@
     "test": "npm run test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "smoke-test": "node scripts/smoke-test.js",
+    "cleanup": "node scripts/cleanup.js",
+    "cleanup:dry-run": "node scripts/cleanup.js --dry-run",
     "infra:up": "docker compose up -d postgres redis minio minio-createbucket",
     "infra:down": "docker compose down"
   },
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.9.1",
+    "globals": "^17.11.0"
+  }
 }

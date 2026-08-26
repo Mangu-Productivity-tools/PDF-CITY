@@ -7,6 +7,8 @@ const NON_RETRYABLE = new Set([
   'DRM_NOT_SUPPORTED',
   'UNZIP_FAILED',
   'PARSE_FAILED',
+  'CONVERSION_FAILED',  // font/page-count limits — deterministic, retrying won't help
+  'PAYLOAD_TOO_LARGE',  // file exceeds MAX_FILE_SIZE_MB — deterministic
 ]);
 
 export class WorkerError extends Error {

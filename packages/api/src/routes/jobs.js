@@ -7,6 +7,7 @@ import {
   deleteJobRecord,
   updateJobOptions,
   toJobResponse,
+  writeAuditLog,
 } from '../db/jobsRepo.js';
 import { validate } from '../middleware/validate.js';
 import { ApiError } from '../middleware/errorHandler.js';
@@ -18,12 +19,35 @@ router.get('/jobs', validate(ListJobsQuerySchema, 'query'), async (req, res, nex
   try {
     const { status, from, to, page, page_size: pageSize } = req.query;
     const { rows, total } = await listJobs({ apiKeyId: req.apiKey.id, status, from, to, page, pageSize });
+
+    // Generate signed download URLs for completed jobs in parallel.
+    const storage = createStorageClient();
+    const jobResponses = await Promise.all(
+      rows.map(async (r) => {
+        let downloadUrl;
+        if (r.status === 'completed' && r.output_key) {
+          downloadUrl = await storage.getSignedDownloadUrl(r.output_key).catch(() => null);
+        }
+        return toJobResponse(r, { downloadUrl });
+      }),
+    );
+
     res.json({
-      jobs: rows.map((r) => toJobResponse(r)),
+      jobs: jobResponses,
       page,
       page_size: pageSize,
       total,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/jobs/:job_id', async (req, res, next) => {
+  try {
+    const job = await getJobById(req.params.job_id);
+    if (!job || job.api_key_id !== req.apiKey.id) throw new ApiError('NOT_FOUND');
+    res.json(toJobResponse(job));
   } catch (err) {
     next(err);
   }
@@ -60,12 +84,14 @@ router.delete('/jobs/:job_id', async (req, res, next) => {
       if (cancelled?.callback_url) {
         await enqueueWebhookDelivery(cancelled.id).catch((err) => req.log?.error({ err }, 'failed to enqueue cancellation webhook'));
       }
+      await writeAuditLog(req.apiKey.key_prefix, 'job.cancelled', 'conversion_job', job.id, {}).catch(() => {});
     } else {
       if (job.output_key) {
         const storage = createStorageClient();
         await storage.deleteObject(job.output_key).catch(() => {});
       }
       await deleteJobRecord(job.id);
+      await writeAuditLog(req.apiKey.key_prefix, 'job.deleted', 'conversion_job', job.id, {}).catch(() => {});
     }
     res.status(204).end();
   } catch (err) {
@@ -73,15 +99,18 @@ router.delete('/jobs/:job_id', async (req, res, next) => {
   }
 });
 
-router.put('/jobs/:job_id', validate(UpdateJobSchema, 'body'), async (req, res, next) => {
+router.patch('/jobs/:job_id', validate(UpdateJobSchema, 'body'), async (req, res, next) => {
   try {
-    const updated = await updateJobOptions(req.params.job_id, req.body.options);
+    const updated = await updateJobOptions(req.params.job_id, req.body.options, req.apiKey.id);
     if (!updated) {
       // Either it doesn't exist, or it already left the `queued` state.
       const existing = await getJobById(req.params.job_id);
       if (!existing || existing.api_key_id !== req.apiKey.id) throw new ApiError('NOT_FOUND');
       throw new ApiError('VALIDATION_ERROR', 'Job already started; options can only be updated while queued.');
     }
+    await writeAuditLog(req.apiKey.key_prefix, 'job.updated', 'conversion_job', updated.id, {
+      engine: updated.engine,
+    }).catch(() => {});
     res.json(toJobResponse(updated));
   } catch (err) {
     next(err);

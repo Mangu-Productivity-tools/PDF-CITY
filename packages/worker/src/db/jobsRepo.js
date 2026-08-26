@@ -35,10 +35,11 @@ export async function markCompleted(id, { outputKey, metadata }) {
 export async function markFailed(id, { code, message }) {
   const { rows } = await getPool().query(
     `UPDATE conversion_jobs
-     SET status = 'failed', error_code = $2, error_message = $3, retry_count = retry_count + 1
+     SET status = 'failed', error_code = $2, error_message = $3, retry_count = retry_count + 1,
+         expires_at = COALESCE(expires_at, now() + ($4 || ' days')::interval)
      WHERE id = $1 AND status <> 'cancelled'
      RETURNING *`,
-    [id, code, message],
+    [id, code, message, String(OBJECT_RETENTION_DAYS)],
   );
   return rows[0];
 }

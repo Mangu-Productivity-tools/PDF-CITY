@@ -1,0 +1,41 @@
+name: CI — Lint & Test
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-test:
+    name: Lint and test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ["22", "24"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build fixture EPUB
+        run: node scripts/fixtures/build-sample-epub.js
+
+      - name: Lint
+        run: npm run lint --workspaces --if-present
+
+      - name: Test — shared
+        run: npm run test --workspace packages/shared
+
+      - name: Test — api
+        run: npm run test --workspace packages/api
+
+      - name: Test — worker (epub pipeline + ssrf guard)
+        run: npm run test --workspace packages/worker
