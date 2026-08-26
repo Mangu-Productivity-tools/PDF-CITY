@@ -102,6 +102,35 @@ async function main() {
 
       if (rows.length < BATCH_SIZE) break;
     }
+
+    // Expire stuck processing/queued jobs that never transitioned to a terminal
+    // state (worker crash, missed retry, etc.).  These have no expires_at set
+    // by markCompleted/markFailed/cancelJob, so the loop above skips them.
+    // Use a conservative 7-day window so a legitimately long-running job is
+    // not evicted prematurely.
+    const STUCK_THRESHOLD_DAYS = 7;
+    if (!DRY_RUN) {
+      const { rowCount } = await client.query(
+        `DELETE FROM conversion_jobs
+         WHERE status IN ('queued', 'processing')
+           AND created_at < now() - ($1 || ' days')::interval`,
+        [String(STUCK_THRESHOLD_DAYS)],
+      );
+      if (rowCount > 0) {
+        console.log(`[cleanup] purged ${rowCount} stuck job(s) older than ${STUCK_THRESHOLD_DAYS} days`);
+        totalDeleted += rowCount;
+      }
+    } else {
+      const { rows: stuckRows } = await client.query(
+        `SELECT id FROM conversion_jobs
+         WHERE status IN ('queued', 'processing')
+           AND created_at < now() - ($1 || ' days')::interval`,
+        [String(STUCK_THRESHOLD_DAYS)],
+      );
+      if (stuckRows.length > 0) {
+        console.log(`[cleanup] would purge ${stuckRows.length} stuck job(s) older than ${STUCK_THRESHOLD_DAYS} days`);
+      }
+    }
   } finally {
     await client.end();
   }

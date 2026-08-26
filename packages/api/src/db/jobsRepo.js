@@ -1,4 +1,5 @@
 import { getPool } from './pool.js';
+import { OBJECT_RETENTION_DAYS } from '@epub2pdf/shared';
 
 function toJobResponse(row, { downloadUrl } = {}) {
   return {
@@ -78,10 +79,11 @@ export async function cancelJob(id) {
   const pool = getPool();
   const { rows } = await pool.query(
     `UPDATE conversion_jobs
-     SET status = 'cancelled'
+     SET status = 'cancelled',
+         expires_at = COALESCE(expires_at, now() + ($2 || ' days')::interval)
      WHERE id = $1 AND status IN ('queued', 'processing')
      RETURNING *`,
-    [id],
+    [id, String(OBJECT_RETENTION_DAYS)],
   );
   return rows[0] ?? null;
 }
