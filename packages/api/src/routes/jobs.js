@@ -7,6 +7,7 @@ import {
   deleteJobRecord,
   updateJobOptions,
   toJobResponse,
+  writeAuditLog,
 } from '../db/jobsRepo.js';
 import { validate } from '../middleware/validate.js';
 import { ApiError } from '../middleware/errorHandler.js';
@@ -60,12 +61,14 @@ router.delete('/jobs/:job_id', async (req, res, next) => {
       if (cancelled?.callback_url) {
         await enqueueWebhookDelivery(cancelled.id).catch((err) => req.log?.error({ err }, 'failed to enqueue cancellation webhook'));
       }
+      await writeAuditLog(req.apiKey.key_prefix, 'job.cancelled', 'conversion_job', job.id, {}).catch(() => {});
     } else {
       if (job.output_key) {
         const storage = createStorageClient();
         await storage.deleteObject(job.output_key).catch(() => {});
       }
       await deleteJobRecord(job.id);
+      await writeAuditLog(req.apiKey.key_prefix, 'job.deleted', 'conversion_job', job.id, {}).catch(() => {});
     }
     res.status(204).end();
   } catch (err) {

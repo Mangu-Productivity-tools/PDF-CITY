@@ -114,4 +114,11 @@ export async function countActiveJobsForKey(apiKeyId) {
   return rows[0]?.active ?? 0;
 }
 
+export async function writeAuditLog(actor, action, subjectType, subjectId, details = {}) {
+  await getPool().query(
+    'INSERT INTO audit_log (actor, action, subject_type, subject_id, details) VALUES ($1, $2, $3, $4, $5)',
+    [actor, action, subjectType, subjectId, JSON.stringify(details)],
+  );
+}
+
 export { toJobResponse };

@@ -108,7 +108,22 @@ ORDER BY attempt;
 
 PDF artifacts and job records expire after `OBJECT_RETENTION_DAYS` (default 30 days).
 
-The `conversion_jobs.expires_at` column is set when a job completes. Run the cleanup script (to be added in Phase 2) or the following SQL to identify expired records:
+The `conversion_jobs.expires_at` column is set when a job completes. Run the cleanup script to delete expired artifacts and job rows:
+
+```bash
+# Dry-run first to see what would be deleted
+node scripts/cleanup.js --dry-run
+
+# Apply (deletes S3 objects then DB rows in batches of 100)
+node scripts/cleanup.js
+
+# Tune batch size and total limit
+node scripts/cleanup.js --batch-size=500 --limit=50000
+```
+
+Or schedule it as a Cloud Run job / Kubernetes CronJob to run nightly.
+
+The following SQL identifies expired records without deleting them:
 
 ```sql
 SELECT id, output_key, expires_at

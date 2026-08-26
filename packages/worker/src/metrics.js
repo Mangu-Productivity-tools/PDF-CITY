@@ -48,4 +48,13 @@ export const renderingMemoryBytesGauge = new client.Gauge({
   registers: [register],
 });
 
+// queue_length is the BullMQ "waiting" job count — used by the KEDA
+// ScaledObject (infra/k8s/20-worker.yaml) to scale the worker Deployment.
+// Updated by updateQueueLengthMetric() in the worker entry point.
+export const queueLengthGauge = new client.Gauge({
+  name: 'queue_length',
+  help: 'Number of jobs currently waiting in the epub-conversion BullMQ queue',
+  registers: [register],
+});
+
 export { register };

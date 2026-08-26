@@ -18,6 +18,7 @@ import {
   recordAttemptError,
   getJobById,
   logEvent,
+  writeAuditLog,
 } from './db/jobsRepo.js';
 import { enqueueWebhookDelivery } from './queue/webhookQueue.js';
 import {
@@ -117,6 +118,7 @@ export async function processConversionJob(bullJob) {
     };
     await markCompleted(jobId, { outputKey, metadata });
     await logEvent(jobId, 'info', 'Job completed', bullJob.id);
+    await writeAuditLog(workerId, 'job.completed', 'conversion_job', jobId, { engine: engineName, page_count: metadata.page_count }).catch(() => {});
     await enqueueWebhookDelivery(jobId);
 
     conversionJobsProcessed.inc();
@@ -130,6 +132,7 @@ export async function processConversionJob(bullJob) {
 
     if (terminal) {
       await markFailed(jobId, { code, message: thrown.message }).catch(() => {});
+      await writeAuditLog(workerId, 'job.failed', 'conversion_job', jobId, { code, attempt: bullJob.attemptsMade + 1 }).catch(() => {});
       conversionJobsFailed.inc({ error_code: code });
       await enqueueWebhookDelivery(jobId).catch((e) => log.error({ err: e }, 'failed to enqueue webhook'));
       log.error({ code }, 'job failed (terminal)');

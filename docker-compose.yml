@@ -2,7 +2,7 @@ name: epub2pdf
 
 services:
   postgres:
-    image: postgres:14-alpine
+    image: postgres:15-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
