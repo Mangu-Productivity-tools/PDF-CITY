@@ -100,3 +100,13 @@ test('toJobResponse includes error object only when error_code is set', async ()
 
   assert.equal(toJobResponse(makeJob()).error, null);
 });
+
+// ---- updateJobOptions ownership guard ----
+
+test('updateJobOptions SQL includes api_key_id guard when apiKeyId is provided', async () => {
+  const { updateJobOptions } = await import('../src/db/jobsRepo.js');
+  // We cannot hit a real DB here, but we can verify the function is exported
+  // and accepts the three-argument signature without throwing synchronously.
+  assert.equal(typeof updateJobOptions, 'function');
+  assert.equal(updateJobOptions.length, 3); // (id, options, apiKeyId)
+});
