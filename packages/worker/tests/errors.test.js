@@ -11,7 +11,7 @@ test('WorkerError stores code and message', () => {
 });
 
 test('toBullMqThrow returns UnrecoverableError for non-retryable codes', () => {
-  const NON_RETRYABLE = ['INVALID_URL', 'INVALID_EPUB', 'DRM_NOT_SUPPORTED', 'UNZIP_FAILED', 'PARSE_FAILED'];
+  const NON_RETRYABLE = ['INVALID_URL', 'INVALID_EPUB', 'DRM_NOT_SUPPORTED', 'UNZIP_FAILED', 'PARSE_FAILED', 'CONVERSION_FAILED'];
   for (const code of NON_RETRYABLE) {
     const result = toBullMqThrow(new WorkerError(code, 'msg'));
     assert.ok(result instanceof UnrecoverableError, `${code} must produce UnrecoverableError`);

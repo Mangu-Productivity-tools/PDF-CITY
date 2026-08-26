@@ -26,6 +26,7 @@ export const ErrorCodes = Object.freeze({
   DRM_NOT_SUPPORTED: { status: 422, message: 'DRM-protected EPUBs are not supported.' },
   UNZIP_FAILED: { status: 422, message: 'Could not unzip the EPUB archive.' },
   PARSE_FAILED: { status: 422, message: 'Could not parse the OPF package / spine.' },
+  CONVERSION_FAILED: { status: 422, message: 'The EPUB could not be converted (file limit or content constraint exceeded).' },
   RENDER_CHROME_FAILED: { status: 500, message: 'Chrome rendering engine failed to produce a PDF.' },
   RENDER_CALIBRE_FAILED: { status: 500, message: 'Calibre rendering engine failed to produce a PDF.' },
   UPLOAD_FAILED: { status: 500, message: 'Could not upload the output PDF to storage.' },

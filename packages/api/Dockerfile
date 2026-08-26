@@ -64,6 +64,9 @@ RUN npm ci \
 FROM deps AS build
 COPY packages/api/src packages/api/src
 COPY packages/shared/src packages/shared/src
+# cleanup.js is invoked by the retention CronJob (infra/k8s/50-cleanup-cronjob.yaml)
+# using this image. It only needs pg + S3 access, which the API image already has.
+COPY scripts/ scripts/
 
 # ---------------------------------------------------------------------------
 # Stage 3: slim runtime image, non-root
@@ -85,6 +88,7 @@ COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --from=build --chown=node:node /app/packages/api ./packages/api
 COPY --from=build --chown=node:node /app/packages/shared ./packages/shared
+COPY --from=build --chown=node:node /app/scripts ./scripts
 
 USER node
 

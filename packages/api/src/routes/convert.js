@@ -116,6 +116,9 @@ router.post('/convert', requireConcurrencyHeadroom, upload.single('file'), async
       status: job.status,
       estimated_time_seconds: estimateProcessingSeconds(req.file?.size),
       status_url: statusUrl,
+      // Returned once so the caller can verify X-Hub-Signature on webhook deliveries.
+      // Store it securely; it is not recoverable after this response.
+      webhook_secret: webhookSecret ?? undefined,
     });
   } catch (err) {
     if (err?.code === 'LIMIT_FILE_SIZE') {

@@ -88,14 +88,13 @@ router.delete('/jobs/:job_id', async (req, res, next) => {
 
 router.patch('/jobs/:job_id', validate(UpdateJobSchema, 'body'), async (req, res, next) => {
   try {
-    const updated = await updateJobOptions(req.params.job_id, req.body.options);
+    const updated = await updateJobOptions(req.params.job_id, req.body.options, req.apiKey.id);
     if (!updated) {
       // Either it doesn't exist, or it already left the `queued` state.
       const existing = await getJobById(req.params.job_id);
       if (!existing || existing.api_key_id !== req.apiKey.id) throw new ApiError('NOT_FOUND');
       throw new ApiError('VALIDATION_ERROR', 'Job already started; options can only be updated while queued.');
     }
-    if (updated.api_key_id !== req.apiKey.id) throw new ApiError('NOT_FOUND');
     await writeAuditLog(req.apiKey.key_prefix, 'job.updated', 'conversion_job', updated.id, {
       engine: updated.engine,
     }).catch(() => {});

@@ -39,8 +39,9 @@ margin_right_in, include_header, include_footer, header_template, footer_templat
 
 Response `201 Created` (+ `Location: /api/v1/status/{job_id}` header):
 ```json
-{ "job_id": "...", "status": "queued", "estimated_time_seconds": 45, "status_url": "/api/v1/status/..." }
+{ "job_id": "...", "status": "queued", "estimated_time_seconds": 45, "status_url": "/api/v1/status/...", "webhook_secret": "<hex, only present when callback_url was provided>" }
 ```
+`webhook_secret` is a one-time value — store it securely. It is used to verify the `X-Hub-Signature` header on webhook deliveries and is not recoverable after this response.
 
 ### `GET /status/{job_id}`
 **Public endpoint — no `Authorization` header required.** The UUID acts as a

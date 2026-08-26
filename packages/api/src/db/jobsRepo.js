@@ -91,14 +91,20 @@ export async function deleteJobRecord(id) {
   await pool.query('DELETE FROM conversion_jobs WHERE id = $1', [id]);
 }
 
-export async function updateJobOptions(id, options) {
+export async function updateJobOptions(id, options, apiKeyId) {
   const pool = getPool();
+  const conditions = apiKeyId
+    ? `WHERE id = $1 AND status = 'queued' AND api_key_id = $4`
+    : `WHERE id = $1 AND status = 'queued'`;
+  const params = apiKeyId
+    ? [id, JSON.stringify(options), options?.engine ?? null, apiKeyId]
+    : [id, JSON.stringify(options), options?.engine ?? null];
   const { rows } = await pool.query(
     `UPDATE conversion_jobs
      SET options = $2, engine = COALESCE($3, engine)
-     WHERE id = $1 AND status = 'queued'
+     ${conditions}
      RETURNING *`,
-    [id, JSON.stringify(options), options?.engine ?? null],
+    params,
   );
   return rows[0] ?? null;
 }
