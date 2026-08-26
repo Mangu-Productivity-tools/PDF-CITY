@@ -6,9 +6,8 @@
 # (both landed while this file was being written) rather than guessed:
 # port 3000, the runAsUser/runAsGroup/fsGroup below, and the
 # NEXT_PUBLIC_API_BASE_URL build-time-env handling are all confirmed
-# against that Dockerfile, not assumptions. Only the health check path
-# (below) remains a judgment call - packages/web/app has no dedicated
-# health route as of this writing.
+# against that Dockerfile, not assumptions. Health probes use the
+# dedicated packages/web/app/api/health/route.js Next.js route handler.
 #
 # Resources are deliberately lighter than api/worker (not specified by the
 # infra spec beyond "your judgment") - a Next.js SSR frontend with no
@@ -100,25 +99,15 @@ spec:
               cpu: "1"
               memory: 1Gi
           livenessProbe:
-            # packages/web/app has no dedicated health route (checked: just
-            # page.jsx/layout.jsx/error.jsx/not-found.jsx and the
-            # jobs/upload/settings pages - no app/api/health/route.js).
-            # httpGet / is a reasonable stand-in (there's always something
-            # served at the root), but swap this for a dedicated route once
-            # one exists, for a signal that doesn't depend on successfully
-            # rendering the actual homepage (which itself calls the api's
-            # /api/v1/jobs via packages/web/lib/apiClient.js client-side, so
-            # a bare `/` 200 doesn't fully prove the api is reachable
-            # either - a real health route could check that too).
             httpGet:
-              path: /
+              path: /api/health
               port: http
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 5
           readinessProbe:
             httpGet:
-              path: /
+              path: /api/health
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10
