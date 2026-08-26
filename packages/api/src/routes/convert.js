@@ -8,7 +8,7 @@ import {
   errorBody,
   createStorageClient,
 } from '@epub2pdf/shared';
-import { createJob } from '../db/jobsRepo.js';
+import { createJob, writeAuditLog } from '../db/jobsRepo.js';
 import { enqueueConversionJob } from '../queue/queue.js';
 import { ApiError } from '../middleware/errorHandler.js';
 import { requireConcurrencyHeadroom } from '../middleware/rateLimit.js';
@@ -105,6 +105,10 @@ router.post('/convert', requireConcurrencyHeadroom, upload.single('file'), async
 
     await enqueueConversionJob(job);
     jobsSubmittedTotal.inc();
+    await writeAuditLog(req.apiKey.key_prefix, 'job.submitted', 'conversion_job', job.id, {
+      engine: parsedOptions.engine ?? 'chrome',
+      source: isMultipart ? 'upload' : 'url',
+    }).catch(() => {});
 
     const statusUrl = `/api/v1/status/${job.id}`;
     res.status(201).set('Location', statusUrl).json({

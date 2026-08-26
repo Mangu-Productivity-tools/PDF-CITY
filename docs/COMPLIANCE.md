@@ -30,16 +30,20 @@ data-subject-access and deletion-accounting requirements.
   time via `DELETE /jobs/{job_id}` (`packages/api/src/routes/jobs.js`), which
   removes the S3 object and hard-deletes the database row.
 
-**Known gap**: `expires_at` is computed and stored correctly, but nothing in
-this repository currently *acts* on it. `db/migrations/002_logs_and_webhooks.sql`
-references `scripts/cleanup.js` in a comment, but that script does
-not exist in this repository yet. In practice, today, a completed job's PDF and
-database row persist indefinitely past their `expires_at` date unless a caller
-explicitly deletes them. Signed download URLs still expire independently after
-`SIGNED_URL_EXPIRY_SECONDS` (24h default), so the *file becomes unreachable*
-long before `expires_at`, but the underlying object and row are not actually
-purged. This needs to be built before "PDFs are deleted after 30 days" can be
-said to be true rather than intended. Track this in `docs/ROADMAP.md` Phase 2.
+`scripts/cleanup.js` implements the retention sweep: it queries for jobs
+where `expires_at < now()`, deletes their S3 objects, and removes the database
+rows (cascade-deleting `conversion_logs` and `webhook_attempts`). It supports
+`--dry-run`, `--batch-size`, and `--limit` flags (see `docs/OPERATIONS.md` §
+Data Retention for scheduling guidance).
+
+**Operational requirement**: the script must be run on a schedule (e.g., a
+Kubernetes CronJob or external scheduler) to enforce the 30-day retention
+window. Until it is scheduled, a completed job's PDF and database row persist
+indefinitely past `expires_at`. Signed download URLs still expire independently
+after `SIGNED_URL_EXPIRY_SECONDS` (24h default), so the *file becomes
+unreachable* before `expires_at`, but the underlying object and row are not
+purged until the script runs. Do not represent "PDFs are deleted after 30 days"
+as an enforced guarantee until the cleanup job is scheduled and verified.
 
 ### Encryption at rest
 
@@ -91,11 +95,10 @@ own, legal compliance.** Specifically:
   depending on customer requirements (FERPA-covered EdTech customers in
   particular, per PRD persona "Bob — EdTech Administrator"), possibly a
   **formal third-party audit**.
-- The retention gap noted above (`expires_at` computed but not enforced) means
-  the "30-day retention" claim in the source PRD/spec is *not currently true in
-  practice* — it's a configured target, not an enforced guarantee. Do not
-  represent it as enforced to a customer or auditor until the cleanup job
-  exists and is verified.
+- `scripts/cleanup.js` exists (see Data Retention section above), but it must
+  be *scheduled* before the 30-day retention claim is operationally enforced.
+  Do not represent it as enforced to a customer or auditor until the scheduled
+  cleanup job is running and verified.
 - No penetration test, security audit, or accessibility (WCAG) audit has been
   performed on this codebase — see `docs/SECURITY.md`.
 - This document itself does not constitute a compliance certification, SOC 2
